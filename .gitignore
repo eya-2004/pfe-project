@@ -1,0 +1,39 @@
+# ── Java / Spring Boot ──
+backend/target/
+backend/.mvn/
+*.class
+*.jar
+*.war
+*.log
+
+# ── React / Node ──
+frontend/node_modules/
+frontend/build/
+frontend/.env.local
+frontend/.env.production
+
+# ── Airflow ──
+airflow/logs/
+airflow/__pycache__/
+airflow/*.pyc
+airflow/.env
+
+# ── Secrets ──
+.env
+*.env
+application-prod.properties
+application-local.properties
+
+# ── IDE ──
+.idea/
+.vscode/
+*.iml
+
+# ── OS ──
+.DS_Store
+Thumbs.db
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
