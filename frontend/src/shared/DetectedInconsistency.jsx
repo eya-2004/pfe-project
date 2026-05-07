@@ -22,13 +22,25 @@ export default function DetectedInconsistency() {
         selectedIterationId, setSelectedIterationId,
         runsForSelectedIteration,
         selectedRunId, setSelectedRunId,
+        correctionMode, setCorrectionMode,
+        hasCorrectionData,
         summary
     } = useInconsistencyData();
 
     // Filtrer les données par table sélectionnée
     const filteredTableData = tableData.filter(item => 
         item.tableName === selectedTable
-    );
+    ).map(item => {
+        if (correctionMode === 'after' && hasCorrectionData) {
+            return {
+                ...item,
+                nbViolations: item.nbViolationsAfter ?? item.nbViolations,
+                nbToCorrect:  item.nbToCorrectAfter  ?? item.nbToCorrect,
+                tauxRejet:    item.tauxRejetAfter     ?? item.tauxRejet,
+            };
+        }
+        return item;
+    });
 
     console.log("=== DETECTED INCONSISTENCY DEBUG ===");
     console.log("Itérations disponibles:", iterationsList);
@@ -37,11 +49,16 @@ export default function DetectedInconsistency() {
     console.log("Nombre de données:", filteredTableData.length);
 
     // Obtenir les statistiques pour la table sélectionnée
+    // DetectedInconsistency.jsx
     const tableStats = {
-        countSource: filteredTableData[0]?.countSource || 0,
-        nbToCorrect: filteredTableData[0]?.nbToCorrect || 0,
-        nbToMigrate: filteredTableData[0]?.nbToMigrate || 0,
-        tauxRejet: filteredTableData[0]?.tauxRejet || 0
+        countSource:      filteredTableData[0]?.countSource      || 0,
+        nbToCorrect:      filteredTableData[0]?.nbToCorrect      || 0,
+        nbToMigrate:      filteredTableData[0]?.nbToMigrate      || 0,
+        tauxRejet:        filteredTableData[0]?.tauxRejet        || 0,
+        // ✅ Ajouter les trois clés manquantes
+        nbToCorrectAfter: filteredTableData[0]?.nbToCorrectAfter ?? null,
+        nbToMigrateAfter: filteredTableData[0]?.nbToMigrateAfter ?? null,
+        tauxRejetAfter:   filteredTableData[0]?.tauxRejetAfter   ?? null,
     };
 
     return (
@@ -60,6 +77,9 @@ export default function DetectedInconsistency() {
                 selectedRunId={selectedRunId}
                 onRunChange={setSelectedRunId}
                 summary={summary}
+                correctionMode={correctionMode}
+                onCorrectionModeChange={setCorrectionMode}  
+                hasCorrectionData={hasCorrectionData}
             />
 
             {loading && (
@@ -90,11 +110,17 @@ export default function DetectedInconsistency() {
                         stats={tableStats}
                         tableData={filteredTableData}
                         selectedTable={selectedTable}
+                        correctionMode={correctionMode}
+                        hasCorrectionData={hasCorrectionData}
                     />
                     
                     {viewMode === 'charts' && <ChartsView tableData={filteredTableData} />}
                     {viewMode === 'categories' && <CategoryBarChart tableData={filteredTableData} />}
-                    {viewMode === 'table' && <TableView tableData={filteredTableData} selectedTable={selectedTable} />}
+                    {viewMode === 'table' && <TableView tableData={filteredTableData}
+                                                        selectedTable={selectedTable}
+                                                        correctionMode={correctionMode}
+                                                        hasCorrectionData={hasCorrectionData}
+                                                    />}
                 </>
             )}
 

@@ -98,62 +98,105 @@ public class CorrectionConfigService {
         );
         return allowedTables.contains(tableName.toLowerCase());
     }
-    public Integer getLastSavedIterationId() {
-        return jdbcTemplate.queryForObject(
-                "SELECT MAX(iteration_id) FROM  correction_iteration_config ", Integer.class
-        );
-
-    }
 
     @Transactional
     public Map<String, Object> saveCorrectionConfig(CorrectionConfigDTO configDTO) {
         String dagRunId = generateDagRunId();
-
         Integer nextIterationId = getNextIterationId();
 
         List<MigrationIterationConfig> configs = new ArrayList<>();
 
-        for (TableSelectionDTO tableSelection : configDTO.getSelectedTables()) {
-            MigrationIterationConfig config = new MigrationIterationConfig();
+        List<TableSelectionDTO> tablesToProcess = configDTO.getSelectedTables();
 
-            config.setIterationId(nextIterationId);
+        // Récupérer les ruleBindings s'ils existent
+        List<Map<String, Object>> ruleBindings = configDTO.getRuleBindings();
 
-            config.setToExecute(tableSelection.getToExecute() != null && tableSelection.getToExecute() ?
-                    MigrationIterationConfig.ToExecuteStatus.YES :
-                    MigrationIterationConfig.ToExecuteStatus.NO);
+        // Créer un map pour retrouver facilement les infos d'un ruleId
+        Map<Long, Map<String, Object>> ruleInfoMap = new HashMap<>();
+        if (ruleBindings != null) {
+            for (Map<String, Object> binding : ruleBindings) {
+                Long ruleId = ((Number) binding.get("transformationRuleId")).longValue();
+                ruleInfoMap.put(ruleId, binding);
+            }
+        }
 
-            if (tableSelection.getBatchSize() != null && tableSelection.getBatchSize() > 0) {
-                config.setRowLimit(tableSelection.getBatchSize());
-            } else {
-                config.setRowLimit(null);
+        if (tablesToProcess == null || tablesToProcess.isEmpty()) {
+            // Cas par défaut - créer une config simple
+            MigrationIterationConfig defaultConfig = new MigrationIterationConfig();
+            defaultConfig.setIterationId(nextIterationId);
+            defaultConfig.setToExecute(MigrationIterationConfig.ToExecuteStatus.YES);
+
+            defaultConfig.setCreatedBy(configDTO.getCreatedBy());
+            defaultConfig.setDagRunId(dagRunId);
+            defaultConfig.setCreatedAt(LocalDateTime.now());
+            defaultConfig.setDetectionRunId(configDTO.getDetectionRunId());
+
+            // ✅ Si on a des bindings, utiliser le premier pour remplir les champs
+            if (ruleBindings != null && !ruleBindings.isEmpty()) {
+                Map<String, Object> firstBinding = ruleBindings.get(0);
+                defaultConfig.setDetectionRuleLabel((String) firstBinding.get("detectionRuleLabel"));
+                defaultConfig.setTargetColumn((String) firstBinding.get("targetColumn"));
             }
 
-            config.setOffsetCurrent(0);
-            config.setCreatedBy(configDTO.getCreatedBy());
-            config.setDagRunId(dagRunId);
-            config.setCreatedAt(LocalDateTime.now());
+            configs.add(defaultConfig);
 
-            if (tableSelection.getSelectedRuleIds() != null &&
-                    !tableSelection.getSelectedRuleIds().isEmpty()) {
+        } else {
+            // Cas normal avec selectedTables
+            for (TableSelectionDTO tableSelection : tablesToProcess) {
 
-                config.setRuleId(tableSelection.getSelectedRuleIds().get(0));
+                if (tableSelection.getSelectedRuleIds() != null && !tableSelection.getSelectedRuleIds().isEmpty()) {
 
-                // Autres règles
-                for (int i = 1; i < tableSelection.getSelectedRuleIds().size(); i++) {
-                    MigrationIterationConfig additionalConfig = new MigrationIterationConfig();
-                    additionalConfig.setIterationId(nextIterationId); // ✅ Même ID
-                    additionalConfig.setRuleId(tableSelection.getSelectedRuleIds().get(i));
-                    additionalConfig.setToExecute(config.getToExecute());
-                    additionalConfig.setRowLimit(config.getRowLimit()); // ✅ Même batch size
-                    additionalConfig.setOffsetCurrent(0);
-                    additionalConfig.setCreatedBy(config.getCreatedBy());
-                    additionalConfig.setDagRunId(dagRunId);
-                    additionalConfig.setCreatedAt(LocalDateTime.now());
-                    configs.add(additionalConfig);
+                    for (int i = 0; i < tableSelection.getSelectedRuleIds().size(); i++) {
+                        MigrationIterationConfig config = new MigrationIterationConfig();
+
+                        Long currentRuleId = tableSelection.getSelectedRuleIds().get(i);
+
+                        config.setIterationId(nextIterationId);
+                        config.setRuleId(currentRuleId);
+                        config.setToExecute(tableSelection.getToExecute() != null && tableSelection.getToExecute() ?
+                                MigrationIterationConfig.ToExecuteStatus.YES :
+                                MigrationIterationConfig.ToExecuteStatus.NO);
+
+
+                        config.setCreatedBy(configDTO.getCreatedBy());
+                        config.setDagRunId(dagRunId);
+                        config.setCreatedAt(LocalDateTime.now());
+                        config.setDetectionRunId(configDTO.getDetectionRunId());
+
+                        // ✅ REMPLIR LES CHAMPS MANQUANTS depuis ruleInfoMap
+                        if (ruleInfoMap.containsKey(currentRuleId)) {
+                            Map<String, Object> info = ruleInfoMap.get(currentRuleId);
+                            config.setDetectionRuleLabel((String) info.get("detectionRuleLabel"));
+                            config.setTargetColumn((String) info.get("targetColumn"));
+                        } else {
+                            // Fallback : chercher dans tous les bindings pour cette table
+                            if (ruleBindings != null) {
+                                for (Map<String, Object> binding : ruleBindings) {
+                                    if (((Number) binding.get("transformationRuleId")).longValue() == currentRuleId) {
+                                        config.setDetectionRuleLabel((String) binding.get("detectionRuleLabel"));
+                                        config.setTargetColumn((String) binding.get("targetColumn"));
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+
+                        configs.add(config);
+                    }
+
+                } else {
+                    // Pas de règles sélectionnées pour cette table
+                    MigrationIterationConfig config = new MigrationIterationConfig();
+                    config.setIterationId(nextIterationId);
+                    config.setToExecute(MigrationIterationConfig.ToExecuteStatus.YES);
+
+                    config.setCreatedBy(configDTO.getCreatedBy());
+                    config.setDagRunId(dagRunId);
+                    config.setCreatedAt(LocalDateTime.now());
+                    config.setDetectionRunId(configDTO.getDetectionRunId());
+                    configs.add(config);
                 }
             }
-
-            configs.add(config);
         }
 
         configRepository.saveAll(configs);
@@ -161,8 +204,8 @@ public class CorrectionConfigService {
         Map<String, Object> response = new HashMap<>();
         response.put("success", true);
         response.put("dagRunId", dagRunId);
-        response.put("iterationId", nextIterationId); // ✅ Retourner le VRAI ID
-        response.put("totalTablesSaved", configDTO.getSelectedTables().size());
+        response.put("iterationId", nextIterationId);
+        response.put("totalTablesSaved", tablesToProcess != null ? tablesToProcess.size() : 1);
         response.put("totalRulesSaved", configs.size());
         response.put("message", "Itération #" + nextIterationId + " sauvegardée avec succès");
 
@@ -191,59 +234,15 @@ public class CorrectionConfigService {
 
     @Value("${airflow.api.password}")
     private String airflowPassword;
-
-    public Map<String, Object> launchAirflowDag(Integer iterationId, String triggeredBy) {
-        List<MigrationIterationConfig> configs = configRepository.findByIterationId(iterationId);
-        if (configs.isEmpty()) {
-            throw new RuntimeException("Aucune configuration trouvée pour l'itération #" + iterationId);
-        }
-
-        String dagRunId = "iteration_" + iterationId + "_" + Instant.now().getEpochSecond();
-        RestTemplate restTemplate = new RestTemplate();
-
-        // 1. Récupérer le token JWT
-        String tokenUrl = airflowBaseUrl + "/auth/token";
-        HttpHeaders tokenHeaders = new HttpHeaders();
-        tokenHeaders.setContentType(MediaType.APPLICATION_JSON);
-        Map<String, String> credentials = Map.of("username", airflowUsername, "password", airflowPassword);
-        HttpEntity<Map<String, String>> tokenRequest = new HttpEntity<>(credentials, tokenHeaders);
-        ResponseEntity<Map> tokenResponse = restTemplate.postForEntity(tokenUrl, tokenRequest, Map.class);
-        String accessToken = (String) tokenResponse.getBody().get("access_token");
-        System.out.println("==> Token obtenu: " + (accessToken != null ? "OUI" : "NON"));
-
-        // 2. Appeler Airflow avec le token
-        Map<String, Object> airflowPayload = new HashMap<>();
-        airflowPayload.put("dag_run_id", dagRunId);
-        airflowPayload.put("logical_date", Instant.now().toString()); // ✅ Requis par Airflow 3.x
-        airflowPayload.put("conf", Map.of("iteration_id", iterationId, "triggered_by", triggeredBy));
-
-        HttpHeaders headers = new HttpHeaders();
-        headers.setContentType(MediaType.APPLICATION_JSON);
-        headers.setBearerAuth(accessToken);
-
-        String airflowUrl = airflowBaseUrl + "/api/v2/dags/" + airflowDagId + "/dagRuns";
-        System.out.println("==> URL: " + airflowUrl);
-
-        HttpEntity<Map<String, Object>> request = new HttpEntity<>(airflowPayload, headers);
-        ResponseEntity<Map> airflowResponse = restTemplate.postForEntity(airflowUrl, request, Map.class);
-
-        // 3. Mettre à jour en base
-        configs.forEach(config -> {
-            config.setDagRunId(dagRunId);
-            configRepository.save(config);
-        });
-
-        // 4. Retourner la réponse
-        Map<String, Object> result = new HashMap<>();
-        result.put("iterationId", iterationId);
-        result.put("dagRunId", dagRunId);
-        result.put("dagId", airflowDagId);
-        result.put("triggeredBy", triggeredBy);
-        result.put("status", airflowResponse.getBody() != null ? airflowResponse.getBody().get("state") : "triggered");
-        result.put("airflowResponse", airflowResponse.getBody());
-
-        return result;
+    public List<Map<String, Object>> getAvailableDetectionRuns() {
+        String sql = """
+        SELECT DISTINCT run_id, execution_date
+        FROM bscs_detected_inconsistency
+        ORDER BY execution_date DESC
+    """;
+        return jdbcTemplate.queryForList(sql);
     }
+
     private String generateDagRunId() {
         return "CORR_" + UUID.randomUUID().toString().substring(0, 8).toUpperCase() +
                 "_" + LocalDateTime.now().toString().replace(":", "-");

@@ -1,9 +1,9 @@
 import React from 'react';
 import Icon from './Icon';
 
-function KpiCard({ icon, label, value, suffix = '' }) {
+function KpiCard({ icon, label, value, suffix = '', highlight = false }) {
     return (
-        <div className="kpi-card">
+        <div className="kpi-card" style={highlight ? { border: '2px solid #3b82f6', background: '#eff6ff' } : {}}>
             <div className="kpi-icon">{icon}</div>
             <div className="kpi-content">
                 <span className="kpi-label">{label}</span>
@@ -15,56 +15,73 @@ function KpiCard({ icon, label, value, suffix = '' }) {
         </div>
     );
 }
+export default function KpiGrid({ stats = {}, tableData = [], selectedTable = '', correctionMode = 'before', hasCorrectionData = false }) {
 
-export default function KpiGrid({ stats = {}, tableData = [], selectedTable = '' }) {
+    const isAfter = correctionMode === 'after' && hasCorrectionData;
     
-    // ✅ AUCUN CALCUL - On prend les valeurs directement du DAG
-    const lignesSource = stats?.countSource || 0;
-    const aCorriger = stats?.nbToCorrect || 0;
-    const aMigrer = stats?.nbToMigrate || 0;
-    const tauxRejet = stats?.tauxRejet || 0;
-    
+    console.log("=== KPIGRID ===");
+    console.log("correctionMode:", correctionMode);
+    console.log("hasCorrectionData:", hasCorrectionData);
+    console.log("isAfter:", isAfter);
+    console.log("stats:", stats);
+    const lignesSource = stats?.countSource  || 0;
+    const aCorriger    = stats?.nbToCorrect  || 0;
+    const aMigrer      = stats?.nbToMigrate  || 0;
+    const tauxRejet    = stats?.tauxRejet    || 0;
+
+    // Valeurs APRÈS (du DAG via stats when isAfter)
+    const aCorrigerAfter = stats?.nbToCorrectAfter  ?? null;
+    const aMigrerAfter   = stats?.nbToMigrateAfter  ?? null;
+    const tauxAfter      = stats?.tauxRejetAfter     ?? null;
+
     const nbRegles = Array.isArray(tableData) ? tableData.length : 0;
+    const nbSkipped = isAfter ? tableData.filter(r => r.isSkipped).length : 0;
 
     return (
         <div className="kpi-grid">
-            
-            {/* 📊 CARTE 1 : Lignes Source */}
+
             <KpiCard
                 icon={<Icon name="database" size={20} />}
                 label="Lignes Source"
                 value={lignesSource}
             />
 
-            {/* ⚠️ CARTE 2 : À Corriger */}
             <KpiCard
                 icon={<Icon name="warning" size={20} />}
-                label="À Corriger"
-                value={aCorriger}
+                label={isAfter ? 'À corriger (après)' : 'À Corriger'}
+                value={isAfter ? (aCorrigerAfter ?? '—') : aCorriger}
+                highlight={isAfter}
             />
 
-            {/* ✅ CARTE 3 : À Migrer */}
             <KpiCard
                 icon={<Icon name="check" size={20} />}
-                label="À Migrer"
-                value={aMigrer}
+                label={isAfter ? 'Migrables (après)' : 'À Migrer'}
+                value={isAfter ? (aMigrerAfter ?? '—') : aMigrer}
+                highlight={isAfter}
             />
 
-            {/* 📈 CARTE 4 : Taux de Rejet */}
             <KpiCard
                 icon={<Icon name="chart" size={20} />}
-                label="Taux de Rejet"
-                value={tauxRejet}
-                suffix="%"
+                label={isAfter ? 'Taux rejet (après)' : 'Taux de Rejet'}
+                value={isAfter ? (tauxAfter ?? '—') : tauxRejet}
+                suffix={isAfter ? (tauxAfter !== null ? '%' : '') : '%'}
+                highlight={isAfter}
             />
 
-            {/* 📋 CARTE 5 : Règles Analysées */}
             <KpiCard
                 icon={<Icon name="list" size={20} />}
                 label="Règles Vérifiées"
                 value={nbRegles}
             />
-            
+
+            {isAfter && nbSkipped > 0 && (
+                <KpiCard
+                    icon={<Icon name="warning" size={20} />}
+                    label="Règles ignorées"
+                    value={nbSkipped}
+                />
+            )}
+
         </div>
     );
 }

@@ -1,6 +1,6 @@
 package com.example.demo;
-
-
+import java.util.List;
+import java.util.Map;
 
 import lombok.Data;
 import java.util.List;
@@ -11,14 +11,15 @@ public class CorrectionConfigDTO {
     private List<TableSelectionDTO> selectedTables;
     private List<RuleSelectionDTO> selectedRules;
     private String createdBy;
+    private String detectionRunId;
+    private List<Map<String, Object>> ruleBindings;
 }
 
 @Data
 class RuleSelectionDTO {
     private Long ruleId;
     private Boolean toExecute;
-    private Integer rowLimit;
-    private Integer offsetCurrent;
+
 }
 @Data
 class TableSelectionDTO {

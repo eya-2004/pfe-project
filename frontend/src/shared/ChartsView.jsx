@@ -57,8 +57,8 @@ const donutData = React.useMemo(() => {
     const nbToMigrate = tableData[0]?.nbToMigrate ?? 0;
     
     return [
-        { name: 'Lignes à corriger', value: nbToCorrect, color: '#F59E0B' },
-        { name: 'Lignes à migrer',   value: nbToMigrate, color: '#3B82F6' }
+        { name: 'Lignes à corriger', value: nbToCorrect, color: '#141b64' },
+        { name: 'Lignes à migrer',   value: nbToMigrate, color: '#5c77a3' }
     ];
 }, [tableData]);
 

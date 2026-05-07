@@ -60,6 +60,22 @@ public class Inconsistency {
 
     @Column(name = "taux_rejet", precision = 6, scale = 2)
     private BigDecimal tauxRejet;
+    @Column(name = "nb_to_correct_after")
+    private Integer nbToCorrectAfter;
+
+    @Column(name = "nb_violations_after")
+    private Integer nbViolationsAfter;
+
+    @Column(name = "taux_rejet_after", precision = 6, scale = 2)
+    private BigDecimal tauxRejetAfter;
+    @Column(name = "nb_to_migrate_after")
+    private Integer nbToMigrateAfter;
+
+    @Column(name = "is_skipped")
+    private Boolean isSkipped;
+
+    @Column(name = "skip_reason")
+    private String skipReason;
 
     // === Getters & Setters ===
 
@@ -104,4 +120,20 @@ public class Inconsistency {
 
     public BigDecimal getTauxRejet()                       { return tauxRejet; }
     public void       setTauxRejet(BigDecimal tauxRejet)  { this.tauxRejet = tauxRejet; }
+    public Integer getNbToCorrectAfter()                        { return nbToCorrectAfter; }
+    public void    setNbToCorrectAfter(Integer nbToCorrectAfter){ this.nbToCorrectAfter = nbToCorrectAfter; }
+
+    public Integer getNbViolationsAfter()                         { return nbViolationsAfter; }
+    public void    setNbViolationsAfter(Integer nbViolationsAfter){ this.nbViolationsAfter = nbViolationsAfter; }
+
+    public BigDecimal getTauxRejetAfter()                        { return tauxRejetAfter; }
+    public void       setTauxRejetAfter(BigDecimal tauxRejetAfter){ this.tauxRejetAfter = tauxRejetAfter; }
+    public Integer getNbToMigrateAfter()                          { return nbToMigrateAfter; }
+    public void    setNbToMigrateAfter(Integer nbToMigrateAfter) { this.nbToMigrateAfter = nbToMigrateAfter; }
+
+    public Boolean getIsSkipped()                   { return isSkipped; }
+    public void    setIsSkipped(Boolean isSkipped)  { this.isSkipped = isSkipped; }
+
+    public String  getSkipReason()                    { return skipReason; }
+    public void    setSkipReason(String skipReason)   { this.skipReason = skipReason; }
 }

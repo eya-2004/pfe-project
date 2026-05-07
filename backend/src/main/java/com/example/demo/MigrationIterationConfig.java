@@ -23,11 +23,6 @@ public class MigrationIterationConfig {
     @Column(name = "to_execute", length = 3)
     private ToExecuteStatus toExecute = ToExecuteStatus.YES;
 
-    @Column(name = "row_limit")
-    private Integer rowLimit;
-
-    @Column(name = "offset_current")
-    private Integer offsetCurrent = 0;
 
     @Column(name = "created_by", length = 100)
     private String createdBy;
@@ -37,7 +32,13 @@ public class MigrationIterationConfig {
 
     @Column(name = "created_at")
     private LocalDateTime createdAt;
+    @Column(name = "detection_run_id")
+    private String detectionRunId;
+    @Column(name = "detection_rule_label", length = 500)
+    private String detectionRuleLabel;
 
+    @Column(name = "target_column", length = 255)
+    private String targetColumn;
     public enum ToExecuteStatus {
         YES, NO
     }

@@ -11,6 +11,9 @@ export default function DashboardHeader({
     selectedIterationId, onIterationChange,
     runsForSelectedIteration = [],
     selectedRunId, onRunChange,
+     correctionMode,
+    onCorrectionModeChange,
+    hasCorrectionData,
     summary = null
 }) {
     // Trouver le run sélectionné
@@ -63,21 +66,48 @@ export default function DashboardHeader({
                     {/* Sélecteur de table */}
                     <div className="filter-group">
                         <label className="filter-label">
-                            <Icon name="database" size={14} />
-                            Table analysée
+                            <Icon name="refresh" size={14} />
+                            Mode affichage
+                        </label>
+                        <div className="correction-toggle">
+                            <button
+                                className={`toggle-btn ${correctionMode === 'before' ? 'active' : ''}`}
+                                onClick={() => onCorrectionModeChange('before')}
+                            >
+                                ⚡ Avant correction
+                            </button>
+                             <button
+                                className={`toggle-btn ${correctionMode === 'after' ? 'active' : ''}`}
+                                onClick={() => hasCorrectionData && onCorrectionModeChange('after')}
+                                disabled={!hasCorrectionData}
+                                title={!hasCorrectionData ? 'Aucune correction effectuée pour cette itération' : ''}
+                            >
+                                ✅ Après correction
+                            </button>
+                        </div>
+                    </div>
+                    {/* Sélecteur de table — à ajouter dans filters-row */}
+                    <div className="filter-group">
+                        <label className="filter-label">
+                            <Icon name="table" size={14} />
+                            Table
                         </label>
                         <select
                             className="filter-select"
-                            value={selectedTable}
+                            value={selectedTable || ''}
                             onChange={e => onTableChange(e.target.value)}
-                            disabled={loading}
+                            disabled={loading || tables.length === 0}
                         >
-                            {tables.map(t => (
-                                <option key={t} value={t}>{t}</option>
+                            {tables.length === 0 && (
+                                <option value="">Aucune table disponible</option>
+                            )}
+                            {tables.map(table => (
+                                <option key={table} value={table}>
+                                    {table}
+                                </option>
                             ))}
                         </select>
                     </div>
-
                     {/* Sélecteur d'itération */}
                     <div className="filter-group">
                         <label className="filter-label">

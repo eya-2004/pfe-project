@@ -1,4 +1,4 @@
-// useInconsistencyData.js - Version corrigée avec filtrage par run
+// useInconsistencyData.js - Version corrigée
 import { useEffect, useState, useCallback, useMemo } from 'react';
 import axios from 'axios';
 
@@ -7,6 +7,7 @@ const api = axios.create({
     withCredentials: true,
     headers: { 'Content-Type': 'application/json' }
 });
+
 export function useInconsistencyData() {
     const [tables, setTables] = useState([]);
     const [tableData, setTableData] = useState([]);
@@ -20,38 +21,33 @@ export function useInconsistencyData() {
     const [runsForSelectedIteration, setRunsForSelectedIteration] = useState([]);
     const [summary, setSummary] = useState(null);
     const [fullTablesData, setFullTablesData] = useState([]);
+    const [correctionMode, setCorrectionMode] = useState('before');
 
     // Charger la liste des itérations
     useEffect(() => {
         const fetchIterations = async () => {
-    try {
-        const response = await api.get('/api/iterations/list');
-        console.log("=== API /iterations/list RAW RESPONSE ===", response.data);
-        
-        const data = response.data;
-        const iterations = data.iterations || [];
-        console.log("=== ITERATIONS PARSED ===", iterations);
-        
-        setIterationsList(iterations);
+            try {
+                const response = await api.get('/api/iterations/list');
+                const data = response.data;
+                const iterations = data.iterations || [];
+                setIterationsList(iterations);
 
-        if (iterations.length > 0) {
-            const first = iterations[0];
-            console.log("=== FIRST ITERATION ===", first);
-            console.log("=== RUNS ===", first.runs);
-            setSelectedIterationId(first.iterationId);
-            setRunsForSelectedIteration(first.runs || []);
-            if (first.runs && first.runs.length > 0) {
-                setSelectedRunId(first.runs[0].runId);
+                if (iterations.length > 0) {
+                    const first = iterations[0];
+                    setSelectedIterationId(first.iterationId);
+                    setRunsForSelectedIteration(first.runs || []);
+                    if (first.runs && first.runs.length > 0) {
+                        setSelectedRunId(first.runs[0].runId);
+                    }
+                }
+            } catch (err) {
+                console.error("Erreur fetchIterations:", err.message);
             }
-        }
-    } catch (err) {
-        console.error("=== ERREUR fetchIterations ===", err.response?.status, err.response?.data, err.message);
-    }
-};
+        };
         fetchIterations();
     }, []);
 
-    // ✅ Charger les résultats pour un run spécifique
+    // Charger les résultats pour un run spécifique
     const fetchResultsByRun = useCallback(async (iterationId, runId) => {
         if (!iterationId || !runId) return;
         
@@ -59,17 +55,11 @@ export function useInconsistencyData() {
         setError(null);
         
         try {
-            console.log(`📡 Chargement itération ${iterationId}, run ${runId}...`);
             const response = await api.get(`/api/inconsistencies/iteration/${iterationId}/run/${runId}`);
-                        const result = response.data;
-            
-            console.log(`📥 Résultat pour run ${runId}:`, result);
+            const result = response.data;
             
             if (result.found) {
-                // ✅ Les données sont directement dans result.data
                 const inconsistencies = result.data || [];
-                
-                // ✅ Grouper par table pour l'affichage
                 const tablesMap = new Map();
                 
                 for (const inc of inconsistencies) {
@@ -78,7 +68,7 @@ export function useInconsistencyData() {
                     
                     if (!tablesMap.has(tableName)) {
                         tablesMap.set(tableName, {
-                            tableName: tableName,
+                            tableName,
                             totalViolations: 0,
                             columns: new Map()
                         });
@@ -88,7 +78,7 @@ export function useInconsistencyData() {
                     
                     if (!table.columns.has(columnName)) {
                         table.columns.set(columnName, {
-                            columnName: columnName,
+                            columnName,
                             totalViolations: 0,
                             rules: []
                         });
@@ -96,6 +86,7 @@ export function useInconsistencyData() {
                     
                     const column = table.columns.get(columnName);
                     
+                    // ✅ ruleEntry propre, sans doublon
                     const ruleEntry = {
                         id: inc.id,
                         rule: inc.rule,
@@ -106,6 +97,14 @@ export function useInconsistencyData() {
                         nbToCorrect: inc.nbToCorrect,
                         nbToMigrate: inc.nbToMigrate,
                         tauxRejet: inc.tauxRejet,
+                        nbViolationsAfter: inc.nbViolationsAfter ?? null,
+                        nbToCorrectAfter:  inc.nbToCorrectAfter  ?? null,
+                        nbToMigrateAfter:  inc.nbToMigrateAfter  ?? null,   // ← nouveau
+                        tauxRejetAfter:    inc.tauxRejetAfter     ?? null,
+                        // Skipped
+                        isSkipped:         inc.isSkipped          ?? false,  // ← nouveau
+                        skipReason:        inc.skipReason         ?? null,   // ← nouveau
+
                         executionDate: inc.executionDate,
                         runId: inc.runId
                     };
@@ -115,7 +114,6 @@ export function useInconsistencyData() {
                     table.totalViolations += (inc.nbViolations || 0);
                 }
                 
-                // Convertir les Maps en tableaux
                 const formattedTables = Array.from(tablesMap.values()).map(table => ({
                     tableName: table.tableName,
                     totalViolations: table.totalViolations,
@@ -124,8 +122,7 @@ export function useInconsistencyData() {
                 
                 setFullTablesData(formattedTables);
                 
-                // ✅ Extraire les noms des tables
-                const tableNames = formattedTables.map(table => table.tableName);
+                const tableNames = formattedTables.map(t => t.tableName);
                 setTables(tableNames);
                 
                 if (tableNames.length > 0 && !selectedTable) {
@@ -143,14 +140,13 @@ export function useInconsistencyData() {
                 });
                 
             } else {
-                console.log(`⚠️ Aucune donnée pour run ${runId}`);
                 setFullTablesData([]);
                 setTables([]);
                 setSelectedTable('');
                 setSummary(null);
             }
         } catch (err) {
-            console.error(`❌ Erreur chargement run ${runId}:`, err);
+            console.error('Erreur chargement run:', err);
             setError(err.message);
             setFullTablesData([]);
             setTables([]);
@@ -160,31 +156,27 @@ export function useInconsistencyData() {
         }
     }, [selectedTable]);
 
-    // ✅ Recharger quand le run change
+    // Recharger quand le run change
     useEffect(() => {
         if (selectedIterationId && selectedRunId) {
             fetchResultsByRun(selectedIterationId, selectedRunId);
         }
     }, [selectedIterationId, selectedRunId, fetchResultsByRun]);
 
-    // ✅ Filtrer les données par table sélectionnée
+    // Filtrer les données par table sélectionnée
     useEffect(() => {
         if (!selectedTable || fullTablesData.length === 0) {
             setTableData([]);
             return;
         }
         
-        const selectedTableData = fullTablesData.find(
-            table => table.tableName === selectedTable
-        );
+        const selectedTableData = fullTablesData.find(t => t.tableName === selectedTable);
         
         if (selectedTableData) {
             const formattedData = [];
             const columns = Object.values(selectedTableData.columns || {});
-            
             for (const column of columns) {
-                const rules = column.rules || [];
-                for (const rule of rules) {
+                for (const rule of (column.rules || [])) {
                     formattedData.push({
                         tableName: selectedTableData.tableName,
                         columnName: column.columnName,
@@ -202,15 +194,9 @@ export function useInconsistencyData() {
     const handleIterationChange = useCallback((iterationId) => {
         const selectedIter = iterationsList.find(i => i.iterationId === parseInt(iterationId));
         if (selectedIter) {
-            console.log(`🔄 Changement vers itération ${iterationId}`);
             setSelectedIterationId(selectedIter.iterationId);
             setRunsForSelectedIteration(selectedIter.runs || []);
-            if (selectedIter.runs && selectedIter.runs.length > 0) {
-                setSelectedRunId(selectedIter.runs[0].runId);
-            } else {
-                setSelectedRunId(null);
-            }
-            // Réinitialiser les données
+            setSelectedRunId(selectedIter.runs?.[0]?.runId || null);
             setFullTablesData([]);
             setTables([]);
             setSelectedTable('');
@@ -220,36 +206,65 @@ export function useInconsistencyData() {
 
     // Changer de run
     const handleRunChange = useCallback((runId) => {
-        console.log(`🔄 Changement vers run ${runId}`);
         setSelectedRunId(runId);
-        // Réinitialiser les données
         setFullTablesData([]);
         setTables([]);
         setSelectedTable('');
         setTableData([]);
     }, []);
 
-    // Calculer les stats pour la table sélectionnée
+    const hasCorrectionData = useMemo(() => {
+        if (!fullTablesData || fullTablesData.length === 0) return false;
+        
+        // Chercher dans toutes les tables et colonnes
+        for (const table of fullTablesData) {
+            const columns = Object.values(table.columns || {});
+            for (const col of columns) {
+                for (const rule of (col.rules || [])) {
+                    if (
+                        !rule.isSkipped &&
+                        rule.nbViolationsAfter !== null &&
+                        rule.nbViolationsAfter !== undefined
+                    ) {
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
+    }, [fullTablesData]);
     const aggregatedStats = useMemo(() => {
         if (!tableData || tableData.length === 0) {
             return {
-                countSource: 0,
-                nbToCorrect: 0,
-                nbToMigrate: 0,
-                tauxRejet: 0
+                countSource: 0, nbToCorrect: 0, nbToMigrate: 0, tauxRejet: 0,
+                nbToCorrectAfter: null, nbToMigrateAfter: null, tauxRejetAfter: null,
             };
         }
-        
+
         const firstItem = tableData[0];
+
+        // Chercher nbToCorrectAfter sur N'IMPORTE quel item (skipped ou pas)
+        const firstWithAfter = tableData.find(
+            item => item.nbToCorrectAfter !== null &&
+                    item.nbToCorrectAfter !== undefined
+        );
+
+        console.log("=== aggregatedStats ===");
+        console.log("firstItem:", firstItem);
+        console.log("firstWithAfter:", firstWithAfter);
+
         return {
-            countSource: firstItem?.countSource || 0,
-            nbToCorrect: firstItem?.nbToCorrect || 0,
-            nbToMigrate: firstItem?.nbToMigrate || 0,
-            tauxRejet: firstItem?.tauxRejet || 0
+            countSource:      firstItem?.countSource || 0,
+            nbToCorrect:      firstItem?.nbToCorrect || 0,
+            nbToMigrate:      firstItem?.nbToMigrate || 0,
+            tauxRejet:        firstItem?.tauxRejet   || 0,
+            nbToCorrectAfter: firstWithAfter?.nbToCorrectAfter ?? null,
+            nbToMigrateAfter: firstWithAfter?.nbToMigrateAfter ?? null,
+            tauxRejetAfter:   firstWithAfter?.tauxRejetAfter   ?? null,
         };
     }, [tableData]);
 
-    return {
+        return {
         tables,
         tableData,
         selectedTable,
@@ -263,6 +278,9 @@ export function useInconsistencyData() {
         runsForSelectedIteration,
         selectedRunId,
         setSelectedRunId: handleRunChange,
+        correctionMode,
+        setCorrectionMode,
+        hasCorrectionData,
         summary
     };
 }
