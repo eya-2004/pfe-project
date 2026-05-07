@@ -22,7 +22,7 @@ dag = DAG(
     default_args=default_args,
     schedule=None,
     catchup=False,
-    description="Détection des incohérences BSCS (v12 — catalogue SQL centralisé)",
+    description="Détection des incohérences BSCS ",
 )
 
 VIOLATION_FETCH_LIMIT = 500
@@ -49,9 +49,6 @@ def _make_result(cnt_sql, ids_sql, params, ids_params, label, category):
         "category":   category,
     }
 
-
-# ─── Helpers de construction de requêtes ──────────────────────────────────────
-
 def _notnull(table, col, pk_col, batch_ids, label=None, extra_cond=None):
     bw, bp = _batch_where(pk_col, batch_ids)
     where_parts = [f"(`{col}` IS NULL OR TRIM(CAST(`{col}` AS CHAR)) = '')"]
@@ -68,8 +65,6 @@ def _notnull(table, col, pk_col, batch_ids, label=None, extra_cond=None):
         label or f"{col} IS_NOT_NULL",
         "COMPLETUDE"
     )
-
-
 def _in_domain(table, col, pk_col, batch_ids, values_str, label=None):
     vals   = [v.strip() for v in values_str.split(",")]
     ph     = ",".join(["%s"] * len(vals))
@@ -399,7 +394,7 @@ SAME_CATALOG = {
     186: lambda pk, b: _compare_curdate("bscs_charge", "VALID_FROM", "<=", pk, b),
     187: lambda pk, b: _regex("bscs_charge", "PERIOD", pk, b,
                                "^(2024|2025|2026)(0[1-9]|1[0-2])$"),
-    188: lambda pk, b: _regex("bscs_charge", "CURRENCY", pk, b, "^[A-Z]{3}$"),
+   
     413: lambda pk, b: _gt_if_nn("bscs_charge", "CO_ID", 0, pk, b),
     414: lambda pk, b: _regex("bscs_charge", "GLCODE", pk, b, "^GL[0-9]+$"),
     415: lambda pk, b: _regex("bscs_charge", "SNCODE", pk, b, "^SN[0-9]+$"),
@@ -457,7 +452,7 @@ SAME_CATALOG = {
                                      category="VALIDITE_TEMPORELLE"),
     140: lambda pk, b: _notnull("bscs_customer", "VALIDFROM", pk, b),
     141: lambda pk, b: _notnull("bscs_customer", "VALIDTO", pk, b),
-    142: lambda pk, b: _regex("bscs_customer", "COUNTRY", pk, b, "^[A-Z]{2}$"),
+    
     143: lambda pk, b: _regex("bscs_customer", "PHONESPEC", pk, b, "^\\+[0-9]{7,15}$"),
     144: lambda pk, b: _notnull("bscs_customer", "EMAILSPEC", pk, b),
     145: lambda pk, b: _notnull("bscs_customer", "IDDOCUMENTNUMBER", pk, b),
@@ -819,10 +814,8 @@ DIFF_CATALOG = {
     204: lambda pk, b: _diff_compare("bscs_billing_account", "LAST_BILLED_DATE", "<=",
                                       "bscs_customer", "VALIDTO",
                                       "CUSTOMER_ID", "CUSTOMER_ID", pk, b),
+    
 
-    # ── BSCS_BILLING_ACCOUNT ↔ MAP_COUNTRY / MAP_CURRENCY ────────────────────
-    243: lambda pk, b: _diff_ref("bscs_billing_account", "COUNTRY",
-                                  "map_country", "nom_en", pk, b),
     244: lambda pk, b: _diff_fk("bscs_billing_account", "CURRENCY_ID",
                              "map_currency", "id", pk, b,
                              label="CURRENCY_ID must exist in map_currency.id"),
@@ -1151,10 +1144,7 @@ DIFF_CATALOG = {
                                       "ixc_dunprocess", "STEP_DUE_DATE",
                                       "ID_PROCESSUS_DUN", "ID_PROCESSUS_DUN", pk, b),
 
-    # ── BSCS_FINDOCS ↔ BSCS_CHARGE ───────────────────────────────────────────
-    240: lambda pk, b: _diff_compare("bscs_findocs", "INITAMOUNT", ">=",
-                                      "bscs_charge", "AMOUNT",
-                                      "ID_FINDOC", "ID_FINDOC", pk, b),
+  
 }
 
 def _correlate_ba_statut_valid_from(pk, b):
@@ -1306,17 +1296,33 @@ def get_primary_key(cursor, table_name):
     return r[0] if r else None
 
 
-def get_batch_ids(cursor, table_name, pk_col, batch_size, offset):
-    """Retourne la liste des PKs du batch courant (LIMIT/OFFSET)."""
-    if not pk_col or not batch_size or batch_size <= 0:
-        return None  # pas de batch → toute la table
+def get_batch_ids(cursor, table_name, pk_col, batch_size, offset, run_id=None, iteration_id=None):
+    if not pk_col:
+        return None
+    if not batch_size or batch_size <= 0:
+        if run_id and iteration_id:
+            cursor.execute(
+                f"""SELECT `{pk_col}` FROM `{table_name}`
+                    WHERE CAST(`{pk_col}` AS CHAR) NOT IN (
+                        SELECT pk_value FROM bscs_detection_batch_pks
+                        WHERE table_name = %s
+                        AND iteration_id = %s
+                        AND run_id != %s
+                    )
+                    ORDER BY `{pk_col}`""",
+                (table_name.lower(), iteration_id, run_id)
+            )
+            rows = cursor.fetchall()
+            return [r[0] for r in rows] if rows else []
+        return None
+    # batch avec LIMIT/OFFSET — inchangé
     cursor.execute(
-        f"SELECT `{pk_col}` FROM `{table_name}` "
-        f"ORDER BY `{pk_col}` LIMIT %s OFFSET %s",
+        f"""SELECT `{pk_col}` FROM `{table_name}`
+            ORDER BY `{pk_col}` LIMIT %s OFFSET %s""",
         (batch_size, offset)
     )
     rows = cursor.fetchall()
-    return [r[0] for r in rows]  # liste vide = batch épuisé
+    return [r[0] for r in rows]
 
 
 def count_batch(cursor, table_name, pk_col, batch_ids):
@@ -1426,6 +1432,7 @@ def get_rules(**context):
 def detect_inconsistency(**context):
     config_rows  = context["ti"].xcom_pull(key="config_rows",  task_ids="get_rules")
     iteration_id = context["ti"].xcom_pull(key="iteration_id", task_ids="init_run")
+    run_id       = context["ti"].xcom_pull(key="run_id",       task_ids="init_run")
 
     if not config_rows:
         logging.warning("⚠️ Aucune règle à traiter.")
@@ -1433,10 +1440,10 @@ def detect_inconsistency(**context):
         context["ti"].xcom_push(key="problematic_ids", value=[])
         return
 
-    conn_info          = get_conn_info()
-    rule_results       = []   # une entrée par règle
-    all_problematic    = []   # PKs en erreur
-    updated_offsets    = set()
+    conn_info       = get_conn_info()
+    rule_results    = []
+    all_problematic = []
+    updated_offsets = set()
 
     for row in config_rows:
         (cfg_id, iter_id, table_name, column_name, rule_label,
@@ -1446,13 +1453,12 @@ def detect_inconsistency(**context):
         rule_id_int  = int(rule_id) if rule_id is not None else -1
         origin_upper = str(rule_origin or "").strip().upper()
 
-        # ── Sélection dans le catalogue ──────────────────────────────────────
-        catalog     = SAME_CATALOG if origin_upper == "SAME" else DIFF_CATALOG
-        rule_fn     = catalog.get(rule_id_int)
+        catalog  = SAME_CATALOG if origin_upper == "SAME" else DIFF_CATALOG
+        rule_fn  = catalog.get(rule_id_int)
 
         if rule_fn is None:
             logging.warning(
-                f"⚠️ Règle {rule_id_int} ({origin_upper}) non trouvée dans le catalogue "
+                f"⚠️ Règle {rule_id_int} ({origin_upper}) non trouvée "
                 f"— [{table_name}] ignorée"
             )
             continue
@@ -1460,53 +1466,164 @@ def detect_inconsistency(**context):
         nb_viol      = 0
         pk_ids       = []
         count_source = 0
+        # ── Initialiser lbl ici pour éviter UnboundLocalError ────────────────
+        lbl          = rule_label or f"rule_{rule_id_int}"
+        category     = "UNKNOWN"
 
         conn = None
         try:
             conn = new_conn(conn_info)
             cur  = conn.cursor()
 
-            # ── Vérification existence table source ──────────────────────────
             if not table_exists(cur, table_name):
-                logging.warning(f"⚠️ Table {table_name} inexistante — règle {rule_id_int} ignorée")
+                logging.warning(
+                    f"⚠️ Table {table_name} inexistante "
+                    f"— règle {rule_id_int} ignorée"
+                )
                 continue
 
-            # ── PK et batch ───────────────────────────────────────────────────
-            pk_col     = get_primary_key(cur, table_name)
-            batch_size_int  = int(batch_size  or 0)
-            offset_int      = int(offset_current or 0)
-            batch_ids  = get_batch_ids(cur, table_name, pk_col, batch_size_int, offset_int)
+            pk_col         = get_primary_key(cur, table_name)
+            batch_size_int = int(batch_size  or 0)
+            offset_int     = int(offset_current or 0)
+
+            # ── Warning si pas de PK sur règle DIFF ──────────────────────────
+            if pk_col is None:
+                logging.warning(
+                    f"⚠️ [{table_name}] Aucune PK détectée — "
+                    f"règle {rule_id_int} ({origin_upper}) exécutée sans filtre batch. "
+                    f"Les résultats peuvent être redondants entre runs."
+                )
+
+            # ── Récupération du batch en excluant les PKs déjà traités ───────
+            batch_ids = get_batch_ids(
+                cur, table_name, pk_col,
+                batch_size_int, offset_int,
+                run_id=run_id,
+                iteration_id=iteration_id
+            )
 
             if batch_ids is not None and len(batch_ids) == 0:
-                logging.info(f"[{table_name}] Batch vide à offset={offset_int} — règle {rule_id_int} ignorée")
+                logging.info(
+                    f"[{table_name}] Batch vide à offset={offset_int} "
+                    f"— règle {rule_id_int} ignorée"
+                )
                 continue
 
             count_source = count_batch(cur, table_name, pk_col, batch_ids)
+
+            # ── Enregistrement PKs batch (une seule fois par table par run) ───
+            # DOIT être après le calcul de batch_ids
+            if pk_col and table_lower not in updated_offsets:
+                pks_to_register = (
+                    batch_ids if batch_ids is not None else []
+                )
+
+                # batch_ids=None → pas de batch configuré → charger tous les PKs
+                if batch_ids is None:
+                    try:
+                        pc_all = new_conn(conn_info)
+                        cr_all = pc_all.cursor()
+                        cr_all.execute(
+                            f"SELECT `{pk_col}` FROM `{table_name}`"
+                        )
+                        pks_to_register = [
+                            str(r[0]) for r in cr_all.fetchall()
+                        ]
+                        cr_all.close()
+                        pc_all.close()
+                    except Exception as e:
+                        logging.error(
+                            f"❌ Erreur chargement all PKs [{table_name}]: {e}"
+                        )
+                        pks_to_register = []
+
+                if pks_to_register:
+                    try:
+                        pc = new_conn(conn_info)
+                        pr = pc.cursor()
+
+                        # Vérifier lesquels sont déjà dans un run précédent
+                        ph_chk = ",".join(["%s"] * len(pks_to_register))
+                        pr.execute(
+                            f"""SELECT pk_value FROM bscs_detection_batch_pks
+                                WHERE table_name = %s
+                                AND iteration_id = %s     # ← même itération
+                                AND run_id != %s          # ← pas le run courant
+                                AND pk_value IN ({ph_chk})""",
+                            [table_lower, iteration_id, run_id] + [str(p) for p in pks_to_register]
+                        )
+                        already_done = {r[0] for r in pr.fetchall()}
+
+                        new_pks = [
+                            p for p in pks_to_register
+                            if str(p) not in already_done
+                        ]
+
+                        if already_done:
+                            logging.warning(
+                                f"⚠️ [{table_name}] {len(already_done)} PKs "
+                                f"déjà traités dans un run précédent → exclus"
+                            )
+
+                        if new_pks:
+                            pr.executemany(
+                                """INSERT IGNORE INTO bscs_detection_batch_pks
+                                   (run_id, iteration_id, table_name, pk_value)
+                                   VALUES (%s, %s, %s, %s)""",
+                                [
+                                    (run_id, iteration_id, table_lower, str(pk))
+                                    for pk in new_pks
+                                ]
+                            )
+                            pc.commit()
+                            logging.info(
+                                f"✅ [{table_name}] {len(new_pks)} "
+                                f"nouveaux PKs enregistrés"
+                            )
+                        else:
+                            logging.info(
+                                f"ℹ️ [{table_name}] Aucun nouveau PK "
+                                f"(tous déjà traités)"
+                            )
+
+                        pr.close()
+                        pc.close()
+
+                    except Exception as e:
+                        logging.error(
+                            f"❌ Erreur enregistrement PKs [{table_name}]: {e}"
+                        )
+
             if count_source == 0:
-                logging.info(f"[{table_name}] Aucune ligne dans le batch — règle {rule_id_int} ignorée")
+                logging.info(
+                    f"[{table_name}] Aucune ligne dans le batch "
+                    f"— règle {rule_id_int} ignorée"
+                )
                 continue
 
-            # ── Construction de la requête via le catalogue ───────────────────
+            # ── Construction requête via catalogue ────────────────────────────
             result = rule_fn(pk_col, batch_ids)
 
             cnt_sql    = result["cnt_sql"]
             ids_sql    = result["ids_sql"]
             params     = result["params"]
             ids_params = result["ids_params"]
-            lbl        = result["label"]
+            lbl        = result["label"]       # ← écrase la valeur par défaut
             category   = result["category"]
 
-            # ── Exécution COUNT ────────────────────────────────────────────────
+            # ── Exécution COUNT ───────────────────────────────────────────────
             cur.execute(cnt_sql, params)
             nb_viol = cur.fetchone()[0]
 
             # ── Exécution IDs si violations ───────────────────────────────────
             if nb_viol > 0 and ids_sql and pk_col:
-                # Eviter le double LIMIT pour la règle 178
                 if f"LIMIT {VIOLATION_FETCH_LIMIT}" in ids_sql:
                     cur.execute(ids_sql, ids_params)
                 else:
-                    cur.execute(ids_sql + f" LIMIT {VIOLATION_FETCH_LIMIT}", ids_params)
+                    cur.execute(
+                        ids_sql + f" LIMIT {VIOLATION_FETCH_LIMIT}",
+                        ids_params
+                    )
                 pk_ids = [str(r[0]) for r in cur.fetchall()]
 
             logging.info(
@@ -1522,6 +1639,8 @@ def detect_inconsistency(**context):
             nb_viol      = 0
             pk_ids       = []
             count_source = count_source or 0
+            # lbl et category ont déjà leur valeur par défaut définie plus haut
+
         finally:
             if conn:
                 try:
@@ -1529,24 +1648,37 @@ def detect_inconsistency(**context):
                 except Exception:
                     pass
 
-        # ── Mise à jour offset batch (une seule fois par table) ───────────────
+        # ── Mise à jour offset batch ──────────────────────────────────────────
         if batch_size_int > 0 and table_lower not in updated_offsets:
-            try:
-                uc = new_conn(conn_info)
-                ur = uc.cursor()
-                ur.execute("""
-                    UPDATE bscs_iteration_config
-                    SET offset_current = offset_current + %s
-                    WHERE iteration_id = %s
-                      AND LOWER(table_name) = %s
-                      AND flag_to_check = 1
-                """, (batch_size_int, iteration_id, table_lower))
-                uc.commit()
-                ur.close()
-                uc.close()
+            if batch_ids is not None and len(batch_ids) > 0:
+                try:
+                    uc = new_conn(conn_info)
+                    ur = uc.cursor()
+                    ur.execute(
+                        """UPDATE bscs_iteration_config
+                           SET offset_current = offset_current + %s
+                           WHERE iteration_id = %s
+                             AND LOWER(table_name) = %s
+                             AND flag_to_check = 1""",
+                        (batch_size_int, iteration_id, table_lower)
+                    )
+                    uc.commit()
+                    ur.close()
+                    uc.close()
+                    updated_offsets.add(table_lower)
+                    logging.info(
+                        f"📍 [{table_name}] Offset avancé de {batch_size_int} "
+                        f"→ prochain offset = {offset_int + batch_size_int}"
+                    )
+                except Exception as e:
+                    logging.error(
+                        f"❌ Erreur update offset [{table_name}]: {e}"
+                    )
+            else:
                 updated_offsets.add(table_lower)
-            except Exception as e:
-                logging.error(f"❌ Erreur update offset [{table_name}]: {e}")
+                logging.info(
+                    f"ℹ️ [{table_name}] Offset non avancé (batch vide)"
+                )
 
         # ── Agrégation résultats ──────────────────────────────────────────────
         rule_results.append({
@@ -1575,12 +1707,6 @@ def detect_inconsistency(**context):
         f"🎉 Détection terminée : {len(rule_results)} règles "
         f"| {len(all_problematic)} lignes problématiques"
     )
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# TASK 4 : save_result
-# ══════════════════════════════════════════════════════════════════════════════
-
 def save_result(**context):
     run_id          = context["ti"].xcom_pull(key="run_id",          task_ids="init_run")
     iteration_id    = context["ti"].xcom_pull(key="iteration_id",    task_ids="init_run")
@@ -1588,7 +1714,8 @@ def save_result(**context):
     problematic_ids = context["ti"].xcom_pull(key="problematic_ids", task_ids="detect_inconsistency")
 
     if not resultat:
-        logging.warning("⚠️ Aucun résultat à sauvegarder.")
+        logging.warning("Aucun résultat à sauvegarder.")  # ✅ FIXED: logger → logging
+        logging.info("Sauvegarde terminée pour run_id=%s", run_id)
         _finalise_run(run_id, iteration_id, status="SUCCESS", resultat=[])
         return
 
@@ -1599,58 +1726,57 @@ def save_result(**context):
     try:
         cur = conn.cursor()
 
-        # ── Nettoyage run précédent ───────────────────────────────────────────
         cur.execute("DELETE FROM bscs_detected_inconsistency WHERE run_id = %s", (run_id,))
         cur.execute("DELETE FROM bscs_problematic_rows       WHERE run_id = %s", (run_id,))
         conn.commit()
 
-        # ── 1. Insertion des résultats par règle ──────────────────────────────
         cur.executemany("""
             INSERT INTO bscs_detected_inconsistency
-                (run_id, iteration_id, execution_date, table_name, column_name,
-                 rule, rule_description, error_category,
-                 count_source, nb_violations, nb_to_correct, nb_to_migrate, taux_rejet)
-            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s, 0, 0, 0.0)
+                (run_id, iteration_id, execution_date,
+                table_name, column_name,
+                rule, rule_description, error_category,
+                rule_id, rule_origin,
+                count_source, nb_violations,
+                nb_to_correct, nb_to_migrate, taux_rejet,
+                nb_to_correct_after, nb_violations_after, taux_rejet_after)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """, [(
             run_id, iteration_id, execution_date,
-            r["table_name"],
-            r["column_name"],
+            r["table_name"], r["column_name"],
             r["rule"] or "RULE_INCONNUE",
-            r["rule_description"],
-            r["error_category"],
-            r["count_source"],
-            r["nb_violations"],
+            r["rule_description"], r["error_category"],
+            r.get("rule_id"),
+            r.get("rule_origin"),
+            r["count_source"], r["nb_violations"],
+            r["nb_violations"],   # nb_to_correct
+            0,                    # nb_to_migrate
+            0.0,                  # taux_rejet
+            0,                    # nb_to_correct_after
+            0,                    # nb_violations_after
+            0.0,                  # taux_rejet_after
         ) for r in resultat])
         conn.commit()
-        logging.info(f"✅ {len(resultat)} règles insérées")
 
-        # ── 2. Insertion des lignes problématiques ────────────────────────────
         if problematic_ids:
             cur.executemany("""
                 INSERT IGNORE INTO bscs_problematic_rows
                     (run_id, iteration_id, table_name, column_name,
-                     rule_label, row_pk_value, detection_date)
-                VALUES (%s,%s,%s,%s,%s,%s,%s)
+                    rule_label, row_pk_value, detection_date)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
             """, [(
                 run_id, iteration_id,
-                p["table_name"],
-                p["column_name"],
-                p["rule_label"],
-                p["row_pk_value"],
+                p["table_name"], p["column_name"],
+                p["rule_label"], p["row_pk_value"],
                 execution_date,
             ) for p in problematic_ids])
             conn.commit()
-            logging.info(f"✅ {len(problematic_ids)} lignes problématiques insérées")
 
-        # ── 3. Calcul lignes uniques en erreur par table ──────────────────────
-        # Récupérer count_source par table (1ère occurrence)
         count_source_par_table = {}
         for r in resultat:
             t = r["table_name"]
             if t not in count_source_par_table:
                 count_source_par_table[t] = r["count_source"]
 
-        # Compter PKs distincts en erreur par table
         cur.execute("""
             SELECT table_name, COUNT(DISTINCT row_pk_value) AS lignes_en_erreur
             FROM bscs_problematic_rows
@@ -1659,25 +1785,17 @@ def save_result(**context):
         """, (run_id,))
         erreur_par_table = {row[0]: row[1] for row in cur.fetchall()}
 
-        # Mise à jour nb_to_correct / nb_to_migrate / taux_rejet
         for tname, src in count_source_par_table.items():
-            en_erreur    = erreur_par_table.get(tname, 0)
-            lignes_ok    = max(src - en_erreur, 0)
-            taux         = round(en_erreur * 100.0 / src, 2) if src > 0 else 0.0
-
+            en_erreur = erreur_par_table.get(tname, 0)
+            lignes_ok = max(src - en_erreur, 0)
+            taux      = round(en_erreur * 100.0 / src, 2) if src > 0 else 0.0
             cur.execute("""
                 UPDATE bscs_detected_inconsistency
                 SET nb_to_correct = %s,
                     nb_to_migrate = %s,
                     taux_rejet    = %s
-                WHERE run_id    = %s
-                  AND table_name = %s
+                WHERE run_id = %s AND table_name = %s
             """, (en_erreur, lignes_ok, taux, run_id, tname))
-
-            logging.info(
-                f"  📊 [{tname}] src={src} | uniques_erreur={en_erreur} "
-                f"| à_migrer={lignes_ok} | taux={taux}%"
-            )
 
         conn.commit()
 
@@ -1685,16 +1803,8 @@ def save_result(**context):
         cur.close()
         conn.close()
 
-    unique_rows = len(set(
-        (p["table_name"], p["row_pk_value"])
-        for p in (problematic_ids or [])
-    ))
     _finalise_run(run_id, iteration_id, status="SUCCESS", resultat=resultat)
-    logging.info(
-        f"🎉 Sauvegarde terminée : {len(resultat)} règles "
-        f"| {unique_rows} lignes uniques en erreur"
-    )
-
+    logging.info("Sauvegarde terminée pour run_id=%s", run_id)  # ✅ FIXED: logger → logging
 def _finalise_run(run_id, iteration_id, status, resultat=None, error_message=None):
     nb_violations = sum(r["nb_violations"] for r in resultat) if resultat else 0
     nb_tables     = len({r["table_name"]   for r in resultat}) if resultat else 0
