@@ -36,6 +36,7 @@ export default function DetectedInconsistency() {
                 ...item,
                 nbViolations: item.nbViolationsAfter ?? item.nbViolations,
                 nbToCorrect:  item.nbToCorrectAfter  ?? item.nbToCorrect,
+                nbToMigrate:  item.nbToMigrateAfter  ?? item.nbToMigrate,
                 tauxRejet:    item.tauxRejetAfter     ?? item.tauxRejet,
             };
         }
