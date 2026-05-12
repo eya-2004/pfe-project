@@ -15,8 +15,7 @@ public class InconsistencyController {
     @Autowired
     private InconsistencyRepository inconsistencyRepository;
 
-    @Autowired
-    private QualityRunRepository qualityRunRepository;
+
 
     @GetMapping
     public List<Inconsistency> getAllInconsistencies() {
