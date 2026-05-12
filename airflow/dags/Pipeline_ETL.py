@@ -16,10 +16,6 @@ from airflow.operators.trigger_dagrun import TriggerDagRunOperator
 
 logger = logging.getLogger(__name__)
 
-# ════════════════════════════════════════════════════════════════════════════
-# CONFIGURATION
-# ════════════════════════════════════════════════════════════════════════════
-
 SOURCE_TO_TARGET: dict[str, str] = {
     "bscs_billing_account":        "corrected_billing_account",
     "bscs_billing_account_assign": "corrected_billing_account_assign",
@@ -154,7 +150,6 @@ class CompleteSqlRuleEngine:
             )
 
         return result
-    # ════════════════════════════════════════════════════════════════════════════
 
     def _handle_ref_check(self, t, c, v, r):
         if not v or ":" not in v:
@@ -173,15 +168,11 @@ class CompleteSqlRuleEngine:
     def _handle_default_if_invalid_ref(self, t, c, v, r):
         default = "NULL" if (v or "").upper() == "NULL" else self._escape(v or "UNKNOWN")
         # On applique le défaut si NULL ou vide — la vérification référentielle
-        # est assurée par le REF_CHECK précédent ; ici on corrige les cas résiduels
+    
         return f"""UPDATE `{t}` SET `{c}` = {default}
                 WHERE (`{c}` IS NULL OR TRIM(`{c}`) = '')""", {}
 
-    # ════════════════════════════════════════════════════════════════════════════
-    # HANDLER : CROSS_TABLE_DATE_MAX
-    # Plafonner la date du champ courant à la valeur d'une colonne d'une autre table
-    # Format : ref_table:ref_column  (jointure via CUSTOMER_ID ou clé déduite)
-    # ════════════════════════════════════════════════════════════════════════════
+
     def _handle_cross_table_date_max(self, t, c, v, r):
         if not v or ":" not in v:
             return None, {}
@@ -202,11 +193,7 @@ class CompleteSqlRuleEngine:
                 AND t.`{c}` IS NOT NULL
                 AND r.`{ref_col}` IS NOT NULL""", {}
 
-    # ════════════════════════════════════════════════════════════════════════════
-    # HANDLER : CROSS_TABLE_DATE_MIN
-    # Forcer la date du champ courant à la valeur minimale d'une autre table
-    # Format : ref_table:ref_column
-    # ════════════════════════════════════════════════════════════════════════════
+
     def _handle_cross_table_date_min(self, t, c, v, r):
         if not v or ":" not in v:
             return None, {}
@@ -225,12 +212,8 @@ class CompleteSqlRuleEngine:
                 WHERE t.`{c}` < r.`{ref_col}`
                 AND t.`{c}` IS NOT NULL
                 AND r.`{ref_col}` IS NOT NULL""", {}
-
-    # ════════════════════════════════════════════════════════════════════════════
-    # HANDLER : CROSS_TABLE_SYNC
     # Synchroniser la valeur du champ depuis une autre table
-    # Format : ref_table:ref_column
-    # ════════════════════════════════════════════════════════════════════════════
+
     def _handle_cross_table_sync(self, t, c, v, r):
         if not v or ":" not in v:
             return None, {}
@@ -250,11 +233,9 @@ class CompleteSqlRuleEngine:
                     OR t.`{c}` != r.`{ref_col}`)
                 AND r.`{ref_col}` IS NOT NULL""", {}
 
-    # ════════════════════════════════════════════════════════════════════════════
-    # HANDLER : CROSS_TABLE_MAX_VALUE
+    
     # Plafonner la valeur numérique d'un champ à celle d'une colonne d'une autre table
-    # Format : ref_table:ref_column
-    # ════════════════════════════════════════════════════════════════════════════
+
     def _handle_cross_table_max_value(self, t, c, v, r):
         if not v or ":" not in v:
             return None, {}
@@ -274,11 +255,8 @@ class CompleteSqlRuleEngine:
                 AND t.`{c}` IS NOT NULL
                 AND r.`{ref_col}` IS NOT NULL""", {}
 
-    # ════════════════════════════════════════════════════════════════════════════
-    # HANDLER : CROSS_TABLE_MIN_VALUE
     # Forcer la valeur numérique à au moins celle d'une colonne d'une autre table
-    # Format : ref_table:ref_column
-    # ════════════════════════════════════════════════════════════════════════════
+
     def _handle_cross_table_min_value(self, t, c, v, r):
         if not v or ":" not in v:
             return None, {}
@@ -298,11 +276,9 @@ class CompleteSqlRuleEngine:
                 AND t.`{c}` IS NOT NULL
                 AND r.`{ref_col}` IS NOT NULL""", {}
 
-    # ════════════════════════════════════════════════════════════════════════════
-    # HANDLER : NULL_IF_OTHER_NULL
+  
     # Forcer le champ courant à NULL si un autre champ est NULL
-    # Format : other_column
-    # ════════════════════════════════════════════════════════════════════════════
+
     def _handle_null_if_other_null(self, t, c, v, r):
         other_col = (v or "").strip()
         if not other_col:
@@ -311,11 +287,7 @@ class CompleteSqlRuleEngine:
                 WHERE (`{other_col}` IS NULL OR TRIM(`{other_col}`) = '')
                 AND `{c}` IS NOT NULL""", {}
 
-    # ════════════════════════════════════════════════════════════════════════════
-    # HANDLER : DEFAULT_IF_NULL_WHEN_OTHER_NOTNULL
-    # Si le champ est NULL ET qu'un autre champ est NOT NULL → valeur par défaut
-    # Format : other_column:default_value
-    # ════════════════════════════════════════════════════════════════════════════
+
     def _handle_default_if_null_when_other_notnull(self, t, c, v, r):
         if not v or ":" not in v:
             return None, {}
@@ -327,11 +299,7 @@ class CompleteSqlRuleEngine:
                 AND `{other_col}` IS NOT NULL
                 AND TRIM(`{other_col}`) != ''""", {}
 
-    # ════════════════════════════════════════════════════════════════════════════
-    # HANDLER : CORRELATE_FIELD_VALUE
-    # Si un champ référence vaut VAL_TRIGGER → forcer le champ courant à VAL_CIBLE
-    # Format : ref_column:trigger_value:target_value
-    # ════════════════════════════════════════════════════════════════════════════
+   
     def _handle_correlate_field_value(self, t, c, v, r):
         if not v or v.count(":") < 2:
             return None, {}
@@ -343,27 +311,17 @@ class CompleteSqlRuleEngine:
                 WHERE `{ref_col}` = {self._escape(trigger_val)}
                 AND `{ref_col}` IS NOT NULL""", {}
 
-    # ════════════════════════════════════════════════════════════════════════════
-    # HANDLER : COMPUTE_FIELD
-    # Recalculer un champ à partir d'une expression entre colonnes
-    # Format : col1*col2  ou  col1+col2  etc.
-    # ════════════════════════════════════════════════════════════════════════════
+
     def _handle_compute_field(self, t, c, v, r):
         if not v:
             return None, {}
-        # Remplacer les noms de colonnes par leur référence SQL backtickée
-        # Supporte : col1*col2, col1+col2, col1-col2, col1/col2
+       
         import re as _re
         expr = _re.sub(r'\b([A-Z_][A-Z0-9_]*)\b', lambda m: f"`{m.group(1)}`", v)
         return f"""UPDATE `{t}` SET `{c}` = {expr}
                 WHERE `{c}` IS NULL
                 OR `{c}` != {expr}""", {}
 
-    # ════════════════════════════════════════════════════════════════════════════
-    # HANDLER : AGGREGATE_CAP
-    # Plafonner proportionnellement la somme des lignes détail au montant parent
-    # Format : ref_table:ref_column  (même logique qu'AGGREGATE_CHECK SUM<=)
-    # ════════════════════════════════════════════════════════════════════════════
     def _handle_aggregate_cap(self, t, c, v, r):
         if not v or ":" not in v:
             return None, {}
@@ -391,19 +349,9 @@ class CompleteSqlRuleEngine:
                 WHERE ovr.max_allowed IS NOT NULL
                 AND ovr.total_paid > 0""", {}
 
-    # ════════════════════════════════════════════════════════════════════════════
-    # HANDLER : AGGREGATE_CHECK_WARN
-    # Variante d'AGGREGATE_CHECK : log warning uniquement, sans modification
-    # ════════════════════════════════════════════════════════════════════════════
     def _handle_aggregate_check_warn(self, t, c, v, r):
         # Réutilise la logique SELECT d'AGGREGATE_CHECK
         return self._handle_aggregate_check(t, c, v, r)
-
-    # ════════════════════════════════════════════════════════════════════════════
-    # HANDLER : LENGTH_RANGE_FIX
-    # Tronquer si > max, padder avec '0' si < min
-    # Format : min:max
-    # ════════════════════════════════════════════════════════════════════════════
     def _handle_length_range_fix(self, t, c, v, r):
         if not v or ":" not in v:
             return None, {}
@@ -421,8 +369,6 @@ class CompleteSqlRuleEngine:
                 WHERE `{c}` IS NOT NULL
                 AND (LENGTH(`{c}`) > {max_len} OR LENGTH(`{c}`) < {min_len})""", {}
 
-    # ════════════════════════════════════════════════════════════════════════════
-    # HANDLER : DATE_MAX_FIELD
     # Plafonner une date à la valeur d'une autre colonne de la même table
     # Format : ref_column
     # ════════════════════════════════════════════════════════════════════════════
@@ -435,12 +381,9 @@ class CompleteSqlRuleEngine:
                 AND `{c}` IS NOT NULL
                 AND `{ref_col}` IS NOT NULL""", {}
 
-    # ════════════════════════════════════════════════════════════════════════════
-    # HANDLER : DEFAULT_IF_BOTH_NULL
+
     # Si le champ courant ET un autre champ sont tous deux NULL → valeur par défaut
-    # sur le champ cible spécifié
-    # Format : target_column:default_value
-    # ════════════════════════════════════════════════════════════════════════════
+
     def _handle_default_if_both_null(self, t, c, v, r):
         if not v or ":" not in v:
             return None, {}
@@ -450,12 +393,6 @@ class CompleteSqlRuleEngine:
         return f"""UPDATE `{t}` SET `{target_col}` = {default}
                 WHERE (`{c}` IS NULL OR TRIM(`{c}`) = '')
                 AND (`{target_col}` IS NULL OR TRIM(`{target_col}`) = '')""", {}
-
-    # ════════════════════════════════════════════════════════════════════════════
-    # UTILITAIRE : déduire la clé de jointure entre deux tables staging
-    # ════════════════════════════════════════════════════════════════════════════
-    # ✅ REMPLACER PAR — _infer_join_key fermée proprement,
-#    puis toutes les méthodes au bon niveau d'indentation (4 espaces)
 
     def _infer_join_key(self, source_table: str, ref_table: str) -> str | None:
         join_map = {
