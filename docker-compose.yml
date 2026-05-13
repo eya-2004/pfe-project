@@ -1,0 +1,29 @@
+cat > docker-compose.yml << 'EOF'
+version: '3.8'
+
+services:
+
+  backend:
+    build:
+      context: ./backend
+    container_name: pfe_backend
+    ports:
+      - "8080:8080"
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:mysql://host.docker.internal:3306/app
+      SPRING_DATASOURCE_USERNAME: ${MYSQL_USERNAME}
+      SPRING_DATASOURCE_PASSWORD: ${MYSQL_PASSWORD}
+      SPRING_JPA_HIBERNATE_DDL_AUTO: update
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  frontend:
+    build:
+      context: ./frontend
+    container_name: pfe_frontend
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+
+EOF
