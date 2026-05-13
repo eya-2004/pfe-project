@@ -12,27 +12,21 @@ const api = axios.create({
 const CorrectionConfig = () => {
   const { email: userEmail } = useAuth();
 
-  // ── Runs de détection ────────────────────────────────────────
   const [availableRuns, setAvailableRuns]           = useState([]);
   const [selectedRunId, setSelectedRunId]           = useState('');
   const [selectedRunInfo, setSelectedRunInfo]       = useState(null);
   const [loadingRuns, setLoadingRuns]               = useState(false);
 
-  // ── Erreurs du run sélectionné ───────────────────────────────
   const [runErrors, setRunErrors]                   = useState({});
   const [loadingErrors, setLoadingErrors]           = useState(false);
 
-  // ── Règles de transformation disponibles par table/colonne ───
   const [transformationRules, setTransformationRules] = useState({});
 
-  // ── Bindings agent : pour chaque erreur, quelle transformation ─
   const [bindings, setBindings]                     = useState({});
 
-  // ── Iteration ────────────────────────────────────────────────
   const [iterationId, setIterationId]               = useState(null);
   const [lastSavedIterationId, setLastSavedIterationId] = useState(null);
 
-  // ── UI ───────────────────────────────────────────────────────
   const [saving, setSaving]                         = useState(false);
   const [launching, setLaunching]                   = useState(false);
   const [alerts, setAlerts]                         = useState([]);
@@ -44,10 +38,7 @@ const CorrectionConfig = () => {
     initializeData();
   }, []);
 
-  // ════════════════════════════════════════════════════════════
-  // INIT
-  // ════════════════════════════════════════════════════════════
-
+ 
   const initializeData = async () => {
     setLoadingRuns(true);
     try {
@@ -70,10 +61,6 @@ const CorrectionConfig = () => {
       setLoadingRuns(false);
     }
   };
-
-  // ════════════════════════════════════════════════════════════
-  // CHARGEMENT DES ERREURS DU RUN SÉLECTIONNÉ
-  // ════════════════════════════════════════════════════════════
 
   const handleSelectRun = async (runId) => {
     setSelectedRunId(runId);
@@ -131,10 +118,6 @@ const CorrectionConfig = () => {
       setLoadingErrors(false);
     }
   };
-
-  // ════════════════════════════════════════════════════════════
-  // BINDING : associer une règle de transformation à une erreur
-  // ════════════════════════════════════════════════════════════
 
   const handleBindRule = (tableName, columnName, detectionRuleLabel, transformationRule) => {
     const key = `${tableName}::${columnName}::${detectionRuleLabel}`;
@@ -362,7 +345,7 @@ const handleSave = async () => {
 
           >
             <Icon name="rocket" size={16} />
-            {lastSavedIterationId && selectedRunId ? `Lancer DAG #${lastSavedIterationId}` : 'Lancer Airflow'}
+            {lastSavedIterationId && selectedRunId ? `Lancer DAG #${lastSavedIterationId}` : 'Lancer DAG'}
           </button>
         </div>
       </div>

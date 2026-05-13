@@ -121,9 +121,9 @@ export default function CategoryBarChart({ tableData }) {
                 {/* Légende */}
                 <div style={{ display: 'flex', gap: 20, padding: '10px 18px 16px', flexWrap: 'wrap' }}>
                     {[
-                        { color: '#0c674a', label: 'Faible (< 20% du max)' },
-                        { color: '#f08b18', label: 'Moyen (20-50% du max)' },
-                        { color: '#ae3030', label: 'Élevé (> 50% du max)' },
+                        { color: '#0c674a', label: 'Faible' },
+                        { color: '#f08b18', label: 'Moyen ' },
+                        { color: '#ae3030', label: 'Élevé ' },
                     ].map(({ color, label }) => (
                         <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                             <span style={{ width: 10, height: 10, borderRadius: '50%', background: color, display: 'inline-block' }} />

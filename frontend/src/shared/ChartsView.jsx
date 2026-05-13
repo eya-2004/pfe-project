@@ -30,9 +30,8 @@ function CustomDonutTooltip({ active, payload }) {
     );
 }
 
-export default function ChartsView({ tableData }) {
-    
-    // Données pour l'histogramme - Filtre des colonnes sans erreurs
+export default function ChartsView({tableData, correctionMode, hasCorrectionData }) {
+    const isAfter = correctionMode === 'after' && hasCorrectionData;
     const barChartData = React.useMemo(() => {
         if (!tableData || !Array.isArray(tableData)) return [];
         
@@ -90,6 +89,7 @@ const totalLignes = donutData.reduce((sum, item) => sum + item.value, 0);
                                 ? `Top ${barChartData.length} colonnes avec violations` 
                                 : '✅ Aucune violation détectée'}
                         </span>
+                        
                     </div>
                     
                     <div className="chart-body">

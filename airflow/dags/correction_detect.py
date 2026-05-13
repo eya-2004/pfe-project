@@ -1141,7 +1141,6 @@ def update_inconsistency(**context) -> None:
 
         conn.commit()
 
-        # Supprimer les lignes POST_CORRECTION parasites créées par l'ancienne version
         cur.execute("""
             DELETE FROM bscs_detected_inconsistency
             WHERE run_id = %s AND error_category = 'POST_CORRECTION'
@@ -1164,7 +1163,19 @@ def update_inconsistency(**context) -> None:
         for t, stats in sorted(by_table.items()):
             logger.info("   📊 %s: %d checks | ✅ %d OK | ⚠️  %d violations restantes",
                         t, stats["total"], stats["ok"], stats["viol"])
-
+        try:
+            src_conn = _new_conn(conn_info)
+            src_cur  = src_conn.cursor()
+            src_cur.execute(
+                "UPDATE bscs_iteration_config SET has_correction = 1 WHERE iteration_id = %s",
+                (iteration_id,)
+            )
+            src_conn.commit()
+            logger.info("✅ has_correction=1 pour iteration_id=%s", iteration_id)
+            src_cur.close()
+            src_conn.close()
+        except Exception as e:
+            logger.error("❌ Erreur UPDATE has_correction : %s", e)
     except Exception as e:
         conn.rollback()
         logger.error("❌ Erreur update_inconsistency : %s", e)

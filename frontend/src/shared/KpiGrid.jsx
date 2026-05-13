@@ -48,21 +48,21 @@ export default function KpiGrid({ stats = {}, tableData = [], selectedTable = ''
 
             <KpiCard
                 icon={<Icon name="warning" size={20} />}
-                label={isAfter ? 'À corriger (après)' : 'À Corriger'}
+                label={isAfter ? 'À corriger ' : 'À Corriger'}
                 value={isAfter ? (aCorrigerAfter ?? '—') : aCorriger}
                 highlight={isAfter}
             />
 
             <KpiCard
                 icon={<Icon name="check" size={20} />}
-                label={isAfter ? 'Migrables (après)' : 'À Migrer'}
+                label={isAfter ? 'À Migrer ' : 'À Migrer'}
                 value={isAfter ? (aMigrerAfter ?? '—') : aMigrer}
                 highlight={isAfter}
             />
 
             <KpiCard
                 icon={<Icon name="chart" size={20} />}
-                label={isAfter ? 'Taux rejet (après)' : 'Taux de Rejet'}
+                label={isAfter ? 'Taux rejet ' : 'Taux de Rejet'}
                 value={isAfter ? (tauxAfter ?? '—') : tauxRejet}
                 suffix={isAfter ? (tauxAfter !== null ? '%' : '') : '%'}
                 highlight={isAfter}

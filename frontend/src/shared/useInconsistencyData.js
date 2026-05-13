@@ -1,9 +1,9 @@
-// useInconsistencyData.js - Version corrigée
-import { useEffect, useState, useCallback, useMemo } from 'react';
+// useInconsistencyData.js
+import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import axios from 'axios';
 
 const api = axios.create({
-    baseURL: '',  
+    baseURL: '',
     withCredentials: true,
     headers: { 'Content-Type': 'application/json' }
 });
@@ -14,7 +14,7 @@ export function useInconsistencyData() {
     const [selectedTable, setSelectedTable] = useState('');
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState(null);
-    
+
     const [iterationsList, setIterationsList] = useState([]);
     const [selectedIterationId, setSelectedIterationId] = useState(null);
     const [selectedRunId, setSelectedRunId] = useState(null);
@@ -23,7 +23,11 @@ export function useInconsistencyData() {
     const [fullTablesData, setFullTablesData] = useState([]);
     const [correctionMode, setCorrectionMode] = useState('before');
 
-    // Charger la liste des itérations
+    // Refs pour lire les valeurs courantes sans créer de dépendances
+    const selectedTableRef = useRef('');
+    useEffect(() => { selectedTableRef.current = selectedTable; }, [selectedTable]);
+
+    // Charger la liste des itérations (une seule fois)
     useEffect(() => {
         const fetchIterations = async () => {
             try {
@@ -41,141 +45,134 @@ export function useInconsistencyData() {
                     }
                 }
             } catch (err) {
-                console.error("Erreur fetchIterations:", err.message);
+                console.error('Erreur fetchIterations:', err.message);
             }
         };
         fetchIterations();
     }, []);
 
-    // Charger les résultats pour un run spécifique
-    const fetchResultsByRun = useCallback(async (iterationId, runId) => {
-        if (!iterationId || !runId) return;
-        
-        setLoading(true);
-        setError(null);
-        
-        try {
-            const response = await api.get(`/api/inconsistencies/iteration/${iterationId}/run/${runId}`);
-            const result = response.data;
-            
-            if (result.found) {
-                const inconsistencies = result.data || [];
-                const tablesMap = new Map();
-                
-                for (const inc of inconsistencies) {
-                    const tableName = inc.tableName;
-                    const columnName = inc.columnName;
-                    
-                    if (!tablesMap.has(tableName)) {
-                        tablesMap.set(tableName, {
-                            tableName,
-                            totalViolations: 0,
-                            columns: new Map()
-                        });
-                    }
-                    
-                    const table = tablesMap.get(tableName);
-                    
-                    if (!table.columns.has(columnName)) {
-                        table.columns.set(columnName, {
-                            columnName,
-                            totalViolations: 0,
-                            rules: []
-                        });
-                    }
-                    
-                    const column = table.columns.get(columnName);
-                    
-                    // ✅ ruleEntry propre, sans doublon
-                    const ruleEntry = {
-                        id: inc.id,
-                        rule: inc.rule,
-                        ruleDescription: inc.ruleDescription,
-                        errorCategory: inc.errorCategory,
-                        countSource: inc.countSource,
-                        nbViolations: inc.nbViolations,
-                        nbToCorrect: inc.nbToCorrect,
-                        nbToMigrate: inc.nbToMigrate,
-                        tauxRejet: inc.tauxRejet,
-                        nbViolationsAfter: inc.nbViolationsAfter ?? null,
-                        nbToCorrectAfter:  inc.nbToCorrectAfter  ?? null,
-                        nbToMigrateAfter:  inc.nbToMigrateAfter  ?? null,   // ← nouveau
-                        tauxRejetAfter:    inc.tauxRejetAfter     ?? null,
-                        // Skipped
-                        isSkipped:         inc.isSkipped          ?? false,  // ← nouveau
-                        skipReason:        inc.skipReason         ?? null,   // ← nouveau
+    // Fonction de fetch pure — prend iterationId et runId en paramètres
+    // Ne dépend d'aucun state → pas de boucle, pas de closure stale
+    const processAndSetData = useCallback((inconsistencies, iterationId, runId) => {
+        const tablesMap = new Map();
 
-                        executionDate: inc.executionDate,
-                        runId: inc.runId
-                    };
-                    
-                    column.rules.push(ruleEntry);
-                    column.totalViolations += (inc.nbViolations || 0);
-                    table.totalViolations += (inc.nbViolations || 0);
+        for (const inc of inconsistencies) {
+            const { tableName, columnName } = inc;
+
+            if (!tablesMap.has(tableName)) {
+                tablesMap.set(tableName, { tableName, totalViolations: 0, columns: new Map() });
+            }
+            const table = tablesMap.get(tableName);
+
+            if (!table.columns.has(columnName)) {
+                table.columns.set(columnName, { columnName, totalViolations: 0, rules: [] });
+            }
+            const column = table.columns.get(columnName);
+
+            column.rules.push({
+                id: inc.id,
+                rule: inc.rule,
+                ruleDescription: inc.ruleDescription,
+                errorCategory: inc.errorCategory,
+                countSource: inc.countSource,
+                nbViolations: inc.nbViolations,
+                nbToCorrect: inc.nbToCorrect,
+                nbToMigrate: inc.nbToMigrate,
+                tauxRejet: inc.tauxRejet,
+                nbViolationsAfter: inc.nbViolationsAfter ?? null,
+                nbToCorrectAfter: inc.nbToCorrectAfter ?? null,
+                nbToMigrateAfter: inc.nbToMigrateAfter ?? null,
+                tauxRejetAfter: inc.tauxRejetAfter ?? null,
+                isSkipped: inc.isSkipped ?? false,
+                skipReason: inc.skipReason ?? null,
+                executionDate: inc.executionDate,
+                runId: inc.runId
+            });
+
+            column.totalViolations += (inc.nbViolations || 0);
+            table.totalViolations += (inc.nbViolations || 0);
+        }
+
+        const formattedTables = Array.from(tablesMap.values()).map(t => ({
+            tableName: t.tableName,
+            totalViolations: t.totalViolations,
+            columns: Object.fromEntries(t.columns)
+        }));
+
+        setFullTablesData(formattedTables);
+
+        const tableNames = formattedTables.map(t => t.tableName);
+        setTables(tableNames);
+
+        // Conserver la table sélectionnée si elle existe encore
+        const currentTable = selectedTableRef.current;
+        if (tableNames.length > 0) {
+            if (!currentTable || !tableNames.includes(currentTable)) {
+                setSelectedTable(tableNames[0]);
+            }
+        }
+
+        setSummary({
+            totalRules: inconsistencies.length,
+            totalViolations: inconsistencies.reduce((sum, inc) => sum + (inc.nbViolations || 0), 0),
+            tablesCount: formattedTables.length,
+            iterationId,
+            runId
+        });
+    }, []);
+
+    // useEffect déclenché uniquement par selectedIterationId / selectedRunId
+    useEffect(() => {
+        if (!selectedIterationId || !selectedRunId) return;
+
+        let cancelled = false; // évite les race conditions si on change vite
+
+        const doFetch = async () => {
+            setLoading(true);
+            setError(null);
+            try {
+                const response = await api.get(
+                    `/api/inconsistencies/iteration/${selectedIterationId}/run/${selectedRunId}`
+                );
+                if (cancelled) return;
+
+                const result = response.data;
+                if (result.found) {
+                    processAndSetData(result.data || [], selectedIterationId, selectedRunId);
+                } else {
+                    setFullTablesData([]);
+                    setTables([]);
+                    setSelectedTable('');
+                    setSummary(null);
                 }
-                
-                const formattedTables = Array.from(tablesMap.values()).map(table => ({
-                    tableName: table.tableName,
-                    totalViolations: table.totalViolations,
-                    columns: Object.fromEntries(table.columns)
-                }));
-                
-                setFullTablesData(formattedTables);
-                
-                const tableNames = formattedTables.map(t => t.tableName);
-                setTables(tableNames);
-                
-                if (tableNames.length > 0 && !selectedTable) {
-                    setSelectedTable(tableNames[0]);
-                } else if (tableNames.length > 0 && selectedTable && !tableNames.includes(selectedTable)) {
-                    setSelectedTable(tableNames[0]);
-                }
-                
-                setSummary({
-                    totalRules: inconsistencies.length,
-                    totalViolations: inconsistencies.reduce((sum, inc) => sum + (inc.nbViolations || 0), 0),
-                    tablesCount: formattedTables.length,
-                    executionDate: result.executionDate,
-                    runId: result.runId
-                });
-                
-            } else {
+            } catch (err) {
+                if (cancelled) return;
+                console.error('Erreur chargement run:', err);
+                setError(err.message);
                 setFullTablesData([]);
                 setTables([]);
                 setSelectedTable('');
-                setSummary(null);
+            } finally {
+                if (!cancelled) setLoading(false);
             }
-        } catch (err) {
-            console.error('Erreur chargement run:', err);
-            setError(err.message);
-            setFullTablesData([]);
-            setTables([]);
-            setSelectedTable('');
-        } finally {
-            setLoading(false);
-        }
-    }, [selectedTable]);
+        };
 
-    // Recharger quand le run change
-    useEffect(() => {
-        if (selectedIterationId && selectedRunId) {
-            fetchResultsByRun(selectedIterationId, selectedRunId);
-        }
-    }, [selectedIterationId, selectedRunId, fetchResultsByRun]);
+        doFetch();
 
-    // Filtrer les données par table sélectionnée
+        return () => { cancelled = true; }; // cleanup si le composant change avant la fin
+    }, [selectedIterationId, selectedRunId, processAndSetData]);
+
+    // Filtrer par table sélectionnée
     useEffect(() => {
         if (!selectedTable || fullTablesData.length === 0) {
             setTableData([]);
             return;
         }
-        
+
         const selectedTableData = fullTablesData.find(t => t.tableName === selectedTable);
-        
         if (selectedTableData) {
             const formattedData = [];
-            const columns = Object.values(selectedTableData.columns || {});
-            for (const column of columns) {
+            for (const column of Object.values(selectedTableData.columns || {})) {
                 for (const rule of (column.rules || [])) {
                     formattedData.push({
                         tableName: selectedTableData.tableName,
@@ -190,7 +187,7 @@ export function useInconsistencyData() {
         }
     }, [selectedTable, fullTablesData]);
 
-    // Changer d'itération
+    // Changer d'itération — reset complet
     const handleIterationChange = useCallback((iterationId) => {
         const selectedIter = iterationsList.find(i => i.iterationId === parseInt(iterationId));
         if (selectedIter) {
@@ -204,35 +201,21 @@ export function useInconsistencyData() {
         }
     }, [iterationsList]);
 
-    // Changer de run
+    // Changer de run — conserver la table via la ref
     const handleRunChange = useCallback((runId) => {
         setSelectedRunId(runId);
         setFullTablesData([]);
         setTables([]);
-        setSelectedTable('');
         setTableData([]);
+        // pas de setSelectedTable('') — la ref gère ça dans processAndSetData
     }, []);
 
     const hasCorrectionData = useMemo(() => {
-        if (!fullTablesData || fullTablesData.length === 0) return false;
-        
-        // Chercher dans toutes les tables et colonnes
-        for (const table of fullTablesData) {
-            const columns = Object.values(table.columns || {});
-            for (const col of columns) {
-                for (const rule of (col.rules || [])) {
-                    if (
-                        !rule.isSkipped &&
-                        rule.nbViolationsAfter !== null &&
-                        rule.nbViolationsAfter !== undefined
-                    ) {
-                        return true;
-                    }
-                }
-            }
-        }
-        return false;
-    }, [fullTablesData]);
+    const iter = iterationsList.find(i => i.iterationId === selectedIterationId);
+    return iter?.hasCorrection === true;
+    }, [iterationsList, selectedIterationId]);
+
+
     const aggregatedStats = useMemo(() => {
         if (!tableData || tableData.length === 0) {
             return {
@@ -240,31 +223,22 @@ export function useInconsistencyData() {
                 nbToCorrectAfter: null, nbToMigrateAfter: null, tauxRejetAfter: null,
             };
         }
-
         const firstItem = tableData[0];
-
-        // Chercher nbToCorrectAfter sur N'IMPORTE quel item (skipped ou pas)
         const firstWithAfter = tableData.find(
-            item => item.nbToCorrectAfter !== null &&
-                    item.nbToCorrectAfter !== undefined
+            item => item.nbToCorrectAfter !== null && item.nbToCorrectAfter !== undefined
         );
-
-        console.log("=== aggregatedStats ===");
-        console.log("firstItem:", firstItem);
-        console.log("firstWithAfter:", firstWithAfter);
-
         return {
-            countSource:      firstItem?.countSource || 0,
-            nbToCorrect:      firstItem?.nbToCorrect || 0,
-            nbToMigrate:      firstItem?.nbToMigrate || 0,
-            tauxRejet:        firstItem?.tauxRejet   || 0,
+            countSource: firstItem?.countSource || 0,
+            nbToCorrect: firstItem?.nbToCorrect || 0,
+            nbToMigrate: firstItem?.nbToMigrate || 0,
+            tauxRejet: firstItem?.tauxRejet || 0,
             nbToCorrectAfter: firstWithAfter?.nbToCorrectAfter ?? null,
             nbToMigrateAfter: firstWithAfter?.nbToMigrateAfter ?? null,
-            tauxRejetAfter:   firstWithAfter?.tauxRejetAfter   ?? null,
+            tauxRejetAfter: firstWithAfter?.tauxRejetAfter ?? null,
         };
     }, [tableData]);
 
-        return {
+    return {
         tables,
         tableData,
         selectedTable,

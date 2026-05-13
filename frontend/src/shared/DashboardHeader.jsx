@@ -1,6 +1,6 @@
-import React from 'react';
+import React , { useState } from 'react';
 import Icon from './Icon';
-
+import {useNavigate} from 'react-router-dom';
 export default function DashboardHeader({
     tables,
     selectedTable, onTableChange,
@@ -14,11 +14,13 @@ export default function DashboardHeader({
      correctionMode,
     onCorrectionModeChange,
     hasCorrectionData,
+    role,
     summary = null
 }) {
     // Trouver le run sélectionné
     const selectedRun = runsForSelectedIteration.find(run => run.runId === selectedRunId);
-
+    const [showNoCorrection, setShowNoCorrection] = useState(false);
+    const navigate = useNavigate();
     return (
         <>
             <header className="dashboard-header">
@@ -59,11 +61,9 @@ export default function DashboardHeader({
                     </button>
                 </div>
             </header>
-
-            {/* Barre de filtres principale */}
             <div className="filters-main-bar">
                 <div className="filters-row">
-                    {/* Sélecteur de table */}
+                
                     <div className="filter-group">
                         <label className="filter-label">
                             <Icon name="refresh" size={14} />
@@ -76,11 +76,15 @@ export default function DashboardHeader({
                             >
                                 ⚡ Avant correction
                             </button>
-                             <button
+                            <button
                                 className={`toggle-btn ${correctionMode === 'after' ? 'active' : ''}`}
-                                onClick={() => hasCorrectionData && onCorrectionModeChange('after')}
-                                disabled={!hasCorrectionData}
-                                title={!hasCorrectionData ? 'Aucune correction effectuée pour cette itération' : ''}
+                                onClick={() => {
+                                    if (!hasCorrectionData) {
+                                        setShowNoCorrection(true); // 👈 ouvrir la fenêtre
+                                    } else {
+                                        onCorrectionModeChange('after');
+                                    }
+                                }}
                             >
                                 ✅ Après correction
                             </button>
@@ -159,9 +163,40 @@ export default function DashboardHeader({
                 </div>
 
             </div>
-
-            {/* Banner d'information compact */}
-            
+                        {showNoCorrection && (
+                <div className="modal-overlay" onClick={() => setShowNoCorrection(false)}>
+                    <div className="modal-box" onClick={e => e.stopPropagation()}>
+                        <div className="modal-icon">⚠️</div>
+                        <h3>Aucune correction effectuée</h3>
+                        <p>
+                            {role === 'admin' 
+                                ? "Aucune itération corrective n'a été effectuée par les agents de migration pour cette itération."
+                                : "Cette itération n'a pas encore fait l'objet d'une correction. Veuillez configurer et lancer une itération corrective."
+                            }
+                        </p>
+                        <div className="modal-actions">
+                            {role !== 'admin' && (
+                                <button 
+                                    className="modal-btn-primary"
+                                    onClick={() => {
+                                        setShowNoCorrection(false);
+                                        navigate('/agent/correctionConfig');
+                                    }}
+                                >
+                                    Configurer une itération
+                                </button>
+                            )}
+                            <button 
+                                className="modal-btn-secondary"
+                                onClick={() => setShowNoCorrection(false)}
+                            >
+                                Fermer
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+                        
         </>
     );
 }

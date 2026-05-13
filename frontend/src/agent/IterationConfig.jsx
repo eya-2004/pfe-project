@@ -380,7 +380,7 @@ export default function IterationConfig() {
                   onClick={handleTriggerAirflow}
                   disabled={triggering || !newIterationId}
                 >
-                  {triggering ? "⏳ Lancement..." : "🚀 Lancer Airflow"}
+                  {triggering ? "⏳ Lancement..." : "🚀 Lancer DAG "}
                 </button>
               </div>
             </div>

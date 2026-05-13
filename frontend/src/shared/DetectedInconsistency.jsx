@@ -9,7 +9,7 @@ import TableView from './TableView';
 import Icon from './Icon';
 import "./dashboard.css";
 
-export default function DetectedInconsistency() {
+export default function DetectedInconsistency({ role }) {
     const [viewMode, setViewMode] = useState('charts');
 
     const {
@@ -36,6 +36,7 @@ export default function DetectedInconsistency() {
                 ...item,
                 nbViolations: item.nbViolationsAfter ?? item.nbViolations,
                 nbToCorrect:  item.nbToCorrectAfter  ?? item.nbToCorrect,
+                nbToMigrate:  item.nbToMigrateAfter  ?? item.nbToMigrate,
                 tauxRejet:    item.tauxRejetAfter     ?? item.tauxRejet,
             };
         }
@@ -80,6 +81,7 @@ export default function DetectedInconsistency() {
                 correctionMode={correctionMode}
                 onCorrectionModeChange={setCorrectionMode}  
                 hasCorrectionData={hasCorrectionData}
+                role={role}
             />
 
             {loading && (
@@ -114,7 +116,7 @@ export default function DetectedInconsistency() {
                         hasCorrectionData={hasCorrectionData}
                     />
                     
-                    {viewMode === 'charts' && <ChartsView tableData={filteredTableData} />}
+                    {viewMode === 'charts' && <ChartsView tableData={filteredTableData} correctionMode={correctionMode}hasCorrectionData={hasCorrectionData} />}
                     {viewMode === 'categories' && <CategoryBarChart tableData={filteredTableData} />}
                     {viewMode === 'table' && <TableView tableData={filteredTableData}
                                                         selectedTable={selectedTable}

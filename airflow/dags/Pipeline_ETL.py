@@ -1368,6 +1368,7 @@ def generate_report(**context) -> None:
             summary.append((c["iteration_id"], context["run_id"], tbl, e, r.get("sql_modifications", 0)))
 
     logger.info("=== BILAN SQL === iter=%s | ext=%d | sql_mods=%d", c["iteration_id"], te, tl)
+    
     if summary:
         h = _staging_hook()
         cn = h.get_conn()
@@ -1378,6 +1379,21 @@ def generate_report(**context) -> None:
         )
         cn.commit()
         cu.close()
+
+    try:
+        src_hook = _source_hook()
+        src_cn = src_hook.get_conn()
+        src_cu = src_cn.cursor()
+        src_cu.execute(
+        "UPDATE bscs_iteration_config SET has_correction = 1 WHERE iteration_id = %s",
+        [c["detection_iteration_id"]]  # 👈 au lieu de c["iteration_id"]
+        )
+        src_cn.commit()
+        src_cu.close()
+        src_cn.close()
+        logger.info("✅ has_correction=1 pour detection_iter=%s", c["detection_iteration_id"])
+    except Exception as e:
+        logger.error("❌ Erreur UPDATE has_correction: %s", e)
 
     context["ti"].xcom_push(key="detection_run_id", value=c.get("detection_run_id"))
     context["ti"].xcom_push(key="detection_iteration_id", value=c.get("detection_iteration_id"))

@@ -5,7 +5,6 @@ import './styles/Sidebar.css';
 
 import './shared/dashboard.css';
 import './admin/manageAgents.css'
-
 import './auth/auth.css';
 import IterationConfig from "./agent/IterationConfig";
 import './shared/toast.css';
