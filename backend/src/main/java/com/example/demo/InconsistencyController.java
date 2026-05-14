@@ -1,4 +1,4 @@
-package com.example.demo;
+\package com.example.demo;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
@@ -15,8 +15,7 @@ public class InconsistencyController {
     @Autowired
     private InconsistencyRepository inconsistencyRepository;
 
-    @Autowired
-    private QualityRunRepository qualityRunRepository;
+
 
     @GetMapping
     public List<Inconsistency> getAllInconsistencies() {

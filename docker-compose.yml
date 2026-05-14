@@ -1,8 +1,5 @@
-cat > docker-compose.yml << 'EOF'
 version: '3.8'
-
 services:
-
   backend:
     build:
       context: ./backend
@@ -16,7 +13,6 @@ services:
       SPRING_JPA_HIBERNATE_DDL_AUTO: update
     extra_hosts:
       - "host.docker.internal:host-gateway"
-
   frontend:
     build:
       context: ./frontend
@@ -25,5 +21,3 @@ services:
       - "3000:80"
     depends_on:
       - backend
-
-EOF
