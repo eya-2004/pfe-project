@@ -1,4 +1,4 @@
-\package com.example.demo;
+package com.example.demo;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
@@ -64,7 +64,16 @@ public class InconsistencyController {
         }
         return inconsistencyRepository.findDistinctColumnsByTableAndIteration(iterationId, tableName);
     }
-
+    
+    @GetMapping("/tablesinc/{iterationId}")
+    public ResponseEntity<List<integer>> getTablesIncoByIteration(@PathVariable  Integer iterationId) {
+        String sql = """ select nb_to_correct  as nbtocorrect 
+        from bscs_detected_inconsistency where iteration_id=?
+            order by table_name
+        SELECT 
+    """;
+        return ResponseEntity.ok(jdbcTemplate.queryForList(sql,runId));
+    }
 
     @GetMapping("/filter")
     public List<Inconsistency> getFiltered(

@@ -1,23 +1,32 @@
-version: '3.8'
 services:
   backend:
     build:
       context: ./backend
     container_name: pfe_backend
     ports:
-      - "8080:8080"
+      - "8082:8082"
     environment:
       SPRING_DATASOURCE_URL: jdbc:mysql://host.docker.internal:3306/app
-      SPRING_DATASOURCE_USERNAME: ${MYSQL_USERNAME}
-      SPRING_DATASOURCE_PASSWORD: ${MYSQL_PASSWORD}
+      SPRING_DATASOURCE_USERNAME: root
+      SPRING_DATASOURCE_PASSWORD: Eyabk123!!!!
       SPRING_JPA_HIBERNATE_DDL_AUTO: update
+      AIRFLOW_API_URL: http://host.docker.internal:8080
     extra_hosts:
       - "host.docker.internal:host-gateway"
+
   frontend:
     build:
       context: ./frontend
+      dockerfile: Dockerfile.dev
     container_name: pfe_frontend
     ports:
-      - "3000:80"
+      - "3000:5173"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    environment:
+      - CHOKIDAR_USEPOLLING=true
+      - CHOKIDAR_INTERVAL=500
+      - WATCHPACK_POLLING=true
     depends_on:
       - backend

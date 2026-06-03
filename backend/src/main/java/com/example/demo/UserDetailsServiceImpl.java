@@ -6,7 +6,7 @@ import org.springframework.security.core.userdetails.UsernameNotFoundException;
 @Service
 public class UserDetailsServiceImpl implements  UserDetailsService {
 	private final UserRepository userRepository;
-	// Constructeur : Spring injecte automatiquement UserRepository
+	// Constructeur  Spring injecte automatiquement UserRepository
 	public UserDetailsServiceImpl(UserRepository userRepository) {
 		this.userRepository=userRepository;
 	}

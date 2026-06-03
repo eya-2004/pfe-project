@@ -12,7 +12,6 @@ const api = axios.create({
 export default function IterationConfig() {
   const { email: userEmail } = useAuth();
 
-  // ── État Mode A ──────────────────────────────────────────────
   const [sourceTables,        setSourceTables]        = useState([]);
   const [selectedSourceTable, setSelectedSourceTable] = useState(null);
   const [sourceTableRules,    setSourceTableRules]    = useState([]);
@@ -20,10 +19,9 @@ export default function IterationConfig() {
   const [newIterationId,      setNewIterationId]      = useState("");
   const [tableBatchSizes,     setTableBatchSizes]     = useState({});
 
-  // Plan des règles sélectionnées
+
   const [planModeA, setPlanModeA] = useState({});
 
-  // ── UI état ──────────────────────────────────────────────────
   const [loading,    setLoading]    = useState(false);
   const [error,      setError]      = useState(null);
   const [exporting,  setExporting]  = useState(false);
@@ -32,15 +30,11 @@ export default function IterationConfig() {
   const [airflowMsg, setAirflowMsg] = useState(null);
   const [dagRunId,   setDagRunId]   = useState(null);
 
-  // ─── Init : Charger tables + ID auto ─────────────────────────
   useEffect(() => {
     loadSourceTables();
     loadNextIterationId();
   }, []);
 
-  // ══════════════════════════════════════════════════════════════
-  // CHARGEMENT
-  // ══════════════════════════════════════════════════════════════
 
   const loadSourceTables = async () => {
     setLoading(true);
@@ -85,10 +79,7 @@ export default function IterationConfig() {
     }
   };
 
-  // ══════════════════════════════════════════════════════════════
-  // GESTION DES RÈGLES
-  // ══════════════════════════════════════════════════════════════
-
+ 
   const toggleRuleModeA = (tableName, columnName, ruleLabel, ruleId, ruleType) => {
     const key = `${tableName}::${columnName}::${ruleLabel}`;
     setPlanModeA(prev => {
@@ -115,8 +106,7 @@ export default function IterationConfig() {
     setTableBatchSizes(prev => ({ ...prev, [tableName]: value }));
   };
 
-  // ── Sélection globale ────────────────────────────────────────
-
+  
   const selectAllTablesModeA = async () => {
     const newPlan = { ...planModeA };
     for (const table of sourceTables) {
@@ -175,8 +165,6 @@ export default function IterationConfig() {
     setPlanModeA(newPlan);
   };
 
-  // ── Calculs état checkboxes ──────────────────────────────────
-
   const areAllTablesSelectedModeA = () => {
     if (sourceTables.length === 0) return false;
     const tablesWithRules = new Set(Object.values(planModeA).map(p => p.tableName));
@@ -202,11 +190,6 @@ export default function IterationConfig() {
   };
 
   const hasSomeRulesInAnyTable = () => Object.keys(planModeA).length > 0;
-
-  // ══════════════════════════════════════════════════════════════
-  // SAUVEGARDE
-  // ══════════════════════════════════════════════════════════════
-
   const handleSavePlanModeA = async () => {
     const planEntries = Object.values(planModeA);
     if (planEntries.length === 0) return alert("Veuillez sélectionner au moins une règle");
@@ -230,7 +213,7 @@ export default function IterationConfig() {
 
       const agentEmail = userEmail || "agent_inconnu";
       const response = await api.post("/iterations/correction-plan", {
-        sourceIterationId:  0,
+        sourceIterationId: null,
         targetIterationId: targetId,
         selectedBy: agentEmail,
         itemsToCorrect,
@@ -245,6 +228,7 @@ export default function IterationConfig() {
           ` (SAME=${sameCount}, DIFF=${diffCount})`
         );
         setTimeout(() => setSuccessMsg(null), 6000);
+        
       } else {
         alert("Erreur: " + (response.data.error || "Inconnue"));
       }
@@ -288,21 +272,18 @@ export default function IterationConfig() {
     }
   };
 
-  // ── Compteurs ────────────────────────────────────────────────
-  
   const planModeACount = Object.keys(planModeA).length;
   const allTablesModeAChecked = areAllTablesSelectedModeA();
   const allRulesModeAChecked = areAllRulesSelectedForCurrentTable();
 
-  // ─── RENDER ──────────────────────────────────────────────────
-
+  
   return (
     <div className="page-with-sidebar">
       <SideBar role="AGENT" />
 
       <div className="main-content-iterconfig">
 
-        {/* HEADER */}
+       
         <div className="ic-header">
           <div className="ic-header-left">
             <h1 className="ic-title">📊 Configuration des itérations</h1>
@@ -317,7 +298,7 @@ export default function IterationConfig() {
           </button>
         </div>
 
-        {/* BANNERS */}
+  
         {successMsg && <div className="ic-success-banner">{successMsg}</div>}
         {airflowMsg && (
           <div className={`ic-airflow-banner ${airflowMsg.type}`}>
@@ -326,7 +307,7 @@ export default function IterationConfig() {
           </div>
         )}
 
-        {/* LOADING */}
+    
         {loading && (
           <div className="ic-loading">
             <div className="ic-spinner" />
@@ -345,10 +326,10 @@ export default function IterationConfig() {
 
         {!loading && !error && (
           <>
-            {/* Config ID + action bar */}
+          
             <div className="ic-mode-a-bar">
               <div className="ic-mode-a-id-wrap">
-                <label className="ic-selector-label">🆔 ID Itération</label>
+                <label className="ic-selector-label"> ID Itération</label>
                 <div className="ic-fixed-id-display">
                   <span className="ic-fixed-id-value">{newIterationId || "..."}</span>
                   <span className="ic-fixed-id-badge">🔒 Auto</span>
@@ -384,8 +365,6 @@ export default function IterationConfig() {
                 </button>
               </div>
             </div>
-
-            {/* Barre de sélection globale */}
             <div className="ic-mode-a-global-selection">
               <div className="ic-global-checks-mode-a">
                 <label className="ic-global-check-item ic-global-check-item-large">
@@ -458,11 +437,10 @@ export default function IterationConfig() {
                 </div>
               </div>
 
-              {/* Panneau droit : Règles */}
               <div className="ic-source-rules-panel">
                 {!selectedSourceTable && (
                   <div className="ic-source-rules-empty">
-                    <p>👈 Sélectionnez une table</p>
+                    <p>👈 Sélectionnez une table </p>
                   </div>
                 )}
 
@@ -514,7 +492,7 @@ export default function IterationConfig() {
                                     <span className="ic-rule-type-badge">{rule.ruleType}</span>
                                   </div>
                                   {rule.ruleDescription && <p className="ic-rule-desc">{rule.ruleDescription}</p>}
-                                  <small className="ic-rule-id-display">#{rule.id}</small>
+                                
                                 </div>
                               </div>
                             );
@@ -527,7 +505,7 @@ export default function IterationConfig() {
               </div>
             </div>
 
-            {/* Résumé du plan */}
+           
             {planModeACount > 0 && (
               <div className="ic-plan-summary">
                 <h3 className="ic-panel-title">📋 Résumé — Itération {newIterationId}</h3>
@@ -539,7 +517,7 @@ export default function IterationConfig() {
                       <span className="ic-plan-col">{entry.columnName}</span>
                       <span className="ic-plan-sep">›</span>
                       <code className="ic-plan-rule">{entry.ruleLabel}</code>
-                      {entry.ruleId && <span className="ic-plan-ruleid-badge">#{entry.ruleId}</span>}
+                     
                       <button
                         className="ic-plan-remove"
                         onClick={() => toggleRuleModeA(entry.tableName, entry.columnName, entry.ruleLabel)}

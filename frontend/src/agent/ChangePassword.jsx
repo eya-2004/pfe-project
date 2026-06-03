@@ -4,48 +4,7 @@ import { useNavigate } from "react-router-dom";
 import axios from "axios";
 import SideBar   from "../shared/SideBar";
 
-const strength = (pwd) => {
-  let score = 0;
-  if (pwd.length >= 8)    score++;
-  if (pwd.length >= 12)   score++;
-  if (/[A-Z]/.test(pwd))  score++;
-  if (/[0-9]/.test(pwd))  score++;
-  if (/[^A-Za-z0-9]/.test(pwd)) score++;
-  return score;
-};
 
-const StrengthBar = ({ password }) => {
-  if (!password) return null;
-  const s = strength(password);
-  
-  // ✅ CORRECTION ICI : Si score = 0, ne rien afficher
-  if (s === 0) return null;
-  
-  const configs = [
-    { label: 'Très faible', color: '#ef4444' },
-    { label: 'Faible',      color: '#f97316' },
-    { label: 'Moyen',       color: '#f59e0b' },
-    { label: 'Bon',         color: '#22c55e' },
-    { label: 'Excellent',   color: '#10b981' },
-  ];
-  
-  // ✅ Maintenant s est toujours >= 1, donc index >= 0
-  const cfg = configs[Math.min(s - 1, 4)];
-  
-  return (
-    <div style={{ marginTop: 8 }}>
-      <div style={{ display: 'flex', gap: 2, marginBottom: 4 }}>
-        {[1,2,3,4,5].map(i => (
-          <div key={i} style={{
-            flex: 1, height: 4, borderRadius: 2,
-            background: i <= s ? cfg.color : '#e5e7eb',
-          }} />
-        ))}
-      </div>
-      <span style={{ fontSize: 12, color: cfg.color, fontWeight: 500 }}>{cfg.label}</span>
-    </div>
-  );
-};
 
 const PwdInput = ({ id, label, value, onChange, placeholder }) => {
   const [show, setShow] = useState(false);
@@ -96,7 +55,8 @@ export default function ChangePassword() {
     try {
       await axios.post('/agent/change-password', { mail, oldPassword, newPassword }, { withCredentials: true });
       sessionStorage.removeItem('pendingMail');
-      navigate('/agent/dashboard');
+      setSuccess("Mot de passe enregistré avec succès");
+      setTimeout(() => navigate('/login'), 2000);
     } catch (err) {
       setError(err.response?.data || "Erreur lors du changement de mot de passe.");
     } finally { setLoading(false); }
@@ -134,11 +94,11 @@ export default function ChangePassword() {
               
               <div>
                 <PwdInput
-                  id="new" label="Nouveau mot de passe"
-                  value={newPassword} onChange={e => setNewPassword(e.target.value)}
-                  placeholder="Minimum 8 caractères"
+                    id="new" label="Nouveau mot de passe"
+                    value={newPassword} onChange={e => setNewPassword(e.target.value)}
+                    placeholder="Minimum 8 caractères"
                 />
-                <StrengthBar password={newPassword} />
+
               </div>
               
               <PwdInput

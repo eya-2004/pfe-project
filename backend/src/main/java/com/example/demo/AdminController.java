@@ -7,7 +7,7 @@ import java.util.List;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import java.util.Map;
-
+import java.time.LocalDateTime;
 @RestController
 @RequestMapping("/admin")
 public class AdminController {
@@ -49,6 +49,7 @@ public class AdminController {
 			return ResponseEntity.internalServerError().build();
 		}
 	}
+	/** récupération des itérations de détection */
 
 	@GetMapping("/agents/{id}/iterations")
 	public ResponseEntity<List<IterationSummaryDto>> getAgentIterations(@PathVariable Long id) {
@@ -60,13 +61,27 @@ public class AdminController {
 		}
 	}
 
+	@GetMapping("/agents/{id}/correction-iterations")
+	public ResponseEntity<List<CorrectionIterationDto>> getAgentCorrectionIterations(@PathVariable Long id) {
+		try {
+			List<CorrectionIterationDto> iterations = agentHistoryService.getAgentCorrectionIterations(id);
+			return ResponseEntity.ok(iterations);
+		} catch (Exception e) {
+			return ResponseEntity.internalServerError().build();
+		}
+	}
+
 	@PostMapping("/createAgent")
 	public ResponseEntity<String> createAgent(
 			@RequestParam String firstname,
 			@RequestParam String lastname,
-			@RequestParam String mail) {
+			@RequestParam String dateNaissance,
+			@RequestParam String mail
+			
+			
+			) {
 		try {
-			authService.createAgent(firstname, lastname, mail);
+			authService.createAgent(firstname, lastname, dateNaissance, mail);
 			return ResponseEntity.ok("Agent créé et identifiants envoyés!");
 		} catch (Exception e) {
 			return ResponseEntity.badRequest().body(e.getMessage());

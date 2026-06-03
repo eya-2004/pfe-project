@@ -194,7 +194,7 @@ export default function AgentIterationHistory() {
     );
 }
 
-// ─── Onglet Détection ───────────────────────────────────────────────────────
+//  Onglet Détection 
 function DetectionTab({ data }) {
     if (data.length === 0) return <div className="detail-empty">Aucune itération  de détection trouvée.</div>;
     return (
@@ -223,7 +223,7 @@ function DetectionTab({ data }) {
     );
 }
 
-// ─── Onglet Correction ──────────────────────────────────────────────────────
+//  Onglet Correction 
 function CorrectionTab({ data }) {
     if (data.length === 0) return <div className="detail-empty">Aucune itération de correction trouvée.</div>;
 

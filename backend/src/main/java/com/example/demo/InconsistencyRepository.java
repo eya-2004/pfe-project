@@ -19,6 +19,7 @@ public interface InconsistencyRepository extends JpaRepository<Inconsistency, In
     List<Inconsistency> findByIterationIdAndTableNameAndColumnName(
             Integer iterationId, String tableName, String columnName);
     List<Inconsistency> findByRunId(String runId);
+    
     @Query("SELECT DISTINCT i.runId, i.executionDate FROM Inconsistency i " +
             "WHERE i.iterationId = :iterationId " +
             "ORDER BY i.executionDate DESC")

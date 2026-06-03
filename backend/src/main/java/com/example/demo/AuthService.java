@@ -1,17 +1,11 @@
 package com.example.demo;
 import java.util.List;
 import org.springframework.mail.SimpleMailMessage;
-//Classe pour créer un email simple en texte brut
 import org.springframework.mail.javamail.JavaMailSender;
-//Interface Spring pour envoyer des emails via SMTP
-
 import org.springframework.security.crypto.password.PasswordEncoder;
-//Pour hasher les mots de passe avant stockage en base
 import org.springframework.stereotype.Service;
-//Marque cette classe comme un Service Spring
-
 import java.security.SecureRandom;
-//Générateur aléatoire sécurisé pour les mots de passe temporaires
+import java.time.LocalDateTime;
 @Service
 public class AuthService {
 	private final UserRepository userRepository;
@@ -23,21 +17,8 @@ public class AuthService {
 		this.userRepository=userRepository;
 		
 	}
-	public void registerAdmin(String firstname,String lastname,
-            String mail, String password) {
-		if (userRepository.existsByMail(mail))
-			throw new RuntimeException("email déja utilisé");
-		User admin=new User();
-		admin.setFirstname(firstname);
-		admin.setLastname(lastname);
-		admin.setMail(mail);
-		admin.setPassword(passEncoder.encode(password));
-		admin.setRole(Role.ADMIN);
-		admin.setMustChangePassword(false);
-		userRepository.save(admin);
-		
-	}
-	public void createAgent(String firstname,String lastname,
+
+	public void createAgent(String firstname,String lastname,String dateNaissance,
             String mail) {
 		if(userRepository.existsByMail (mail))
 			throw new RuntimeException("email déja utilisé");
@@ -45,6 +26,7 @@ public class AuthService {
 		User agent=new User();
 		agent.setFirstname(firstname);
 		agent.setLastname(lastname);
+		agent.setDateNaissance(dateNaissance);
 		agent.setMail(mail);
 		agent.setPassword(passEncoder.encode(tempPass));
 		agent.setRole(Role.AGENT_MIGRATION);
@@ -84,27 +66,22 @@ public class AuthService {
 		        "Votre compte agent a été créé.\n\n" +
 		        "Email    : " + mail + "\n" +
 		        "Mot de passe temporaire : " + password + "\n\n" +
-		        "Connectez-vous ici : http://localhost:5173/login\n\n" +
+		        "Connectez-vous ici : http://localhost:3000/login\n\n" +
 		        "Vous serez invité à changer votre mot de passe à la première connexion.\n\n" +
 		        "Cordialement.");
 		javaMailSender.send(msg);
 	}
 	 private String generatePassword() {
 	        String chars = "ABCDEFGHIJabcdefghij0123456789@#!";
-	        // Caractères autorisés dans le mot de passe
-
+			  // Générateur aléatoire sécurisé
 	        SecureRandom r = new SecureRandom();
-	        // Générateur aléatoire sécurisé
-
 	        StringBuilder sb = new StringBuilder();
-	        // Pour construire la chaîne caractère par caractère
+			//  mot de passe de 10 caractères
 
 	        for (int i = 0; i < 10; i++)
 	            sb.append(chars.charAt(r.nextInt(chars.length())));
-	        // Répète 10 fois → mot de passe de 10 caractères
-
+	       
 	        return sb.toString();
-	        // Retourne le mot de passe généré
 	    }
 	
 

@@ -29,7 +29,7 @@ export default function KpiGrid({ stats = {}, tableData = [], selectedTable = ''
     const aMigrer      = stats?.nbToMigrate  || 0;
     const tauxRejet    = stats?.tauxRejet    || 0;
 
-    // Valeurs APRÈS (du DAG via stats when isAfter)
+    // Valeurs APRÈS 
     const aCorrigerAfter = stats?.nbToCorrectAfter  ?? null;
     const aMigrerAfter   = stats?.nbToMigrateAfter  ?? null;
     const tauxAfter      = stats?.tauxRejetAfter     ?? null;

@@ -1,15 +1,13 @@
 from __future__ import annotations
-
-
 import logging
 import re
 from datetime import datetime, timedelta
 from typing import Any
-
 import pymysql
 from airflow import DAG
 from airflow.operators.python import PythonOperator
 from airflow.providers.mysql.hooks.mysql import MySqlHook
+from DAG_COMPARE_RULE import SAME_CATALOG, DIFF_CATALOG
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +27,7 @@ SOURCE_TO_CORRECTED: dict[str, str] = {
     "bscs_billing_account_assign": "corrected_billing_account_assign",
     "bscs_charge":                 "corrected_charge",
     "bscs_customer":               "corrected_customer",
+    "bscs_customer_tax_exempt": "corrected_customer_tax_exempt",
     "bscs_findocs":                "corrected_findocs",
     "bscs_payments":               "corrected_payments",
     "bscs_payments_det":           "corrected_payments_det",
@@ -37,20 +36,26 @@ SOURCE_TO_CORRECTED: dict[str, str] = {
     "bscs_resource_port":          "corrected_resource_port",
     "bscs_resource_sim":           "corrected_resource_sim",
     "bscs_services":               "corrected_services",
+    "bscs_memos": "corrected_memos",
 }
+REF_TABLES_SOURCE = {"map_currency", "map_country"}
+CORRECTED_AVAILABLE = set(SOURCE_TO_CORRECTED.values())
+
 CORRECTED_TABLE_PKS: dict[str, str] = {
     "corrected_billing_account":        "BILLING_ACCOUNT_ID",
     "corrected_billing_account_assign": "BILLING_ACCOUNT_ID",
-    "corrected_charge":                 "CO_ID",
-    "corrected_customer":               "CUSTOMER_ID",
-    "corrected_findocs":                "ID_FINDOC",
-    "corrected_payments":               "PAYMENT_ID",
-    "corrected_payments_det":           "ID",
-    "corrected_place":                  "PLACE_ID",
-    "corrected_resource_directory":     "ID_RESOURCE",
+    "corrected_charge":"CO_ID",
+    "corrected_customer":"CUSTOMER_ID",
+    "corrected_findocs":"ID_FINDOC",
+    "corrected_payments":"PAYMENT_ID",
+    "corrected_payments_det":"ID",
+    "corrected_place":"PLACE_ID",
+    "corrected_resource_directory":"ID_RESOURCE",
     "corrected_resource_port":          "ID_RESOURCE",
     "corrected_resource_sim":           "ID_RESOURCE",
-    "corrected_services":               "ID_SERVICE",
+    "corrected_services":   "ID_SERVICE",
+    "corrected_memos": "TICKLER_NUMBER",
+    "corrected_customer_tax_exempt": "CUSTOMER_ID",
 }
 def _get_conn_info() -> dict:
     hook = MySqlHook(mysql_conn_id="mysql_conn")
@@ -79,35 +84,66 @@ def _staging_conn_info() -> dict:
         "charset":  "utf8mb4",
     }
 
-
+#placeholders pour une liste
 def _ph(lst: list) -> str:
-    """Génère les placeholders %s pour une liste."""
+    
     return ",".join(["%s"] * len(lst))
 
 
 def _pk_where(pk_col: str, pks: list, alias: str = "") -> tuple[str, list]:
-    """Clause WHERE limitée aux PKs du batch, avec alias optionnel."""
+    
     if not pks:
-        return "1=0", []
-    pfx = f"`{alias}`." if alias else ""
+        return "1=0", []#évite une requête SQL invalide
+    pfx = f"`{alias}`." if alias else "" #alias si il ya jointure
     return f"{pfx}`{pk_col}` IN ({_ph(pks)})", list(pks)
 
 
 def _table_corrected(table_name: str) -> str:
-    
+    #Retourne le nom de la table corrigée 
     return SOURCE_TO_CORRECTED.get(table_name, table_name)
 
+#Retourne un ensemble de noms de tables
+def _get_tables_from_sql(sql: str) -> set[str]:
+    """Extrait les noms de tables bscs_xxx référencées dans un SQL."""
+    return set(re.findall(r'`?(bscs_[a-z_]+)`?', sql))
 
-def _rewrite_sql_for_corrected(sql: str) -> str:
-   
-    for src, corr in SOURCE_TO_CORRECTED.items():
-        # On remplace `bscs_xxx` (avec ou sans backticks) par `corrected_xxx`
-        sql = re.sub(
+#remplace les noms bscs_xxx par corrected_xxx
+def _rewrite_sql_for_corrected_safe(sql: str, stg_cur, src_conn_info: dict) -> tuple[str, bool]:
+    bscs_tables = _get_tables_from_sql(sql)
+    for t in bscs_tables:
+        corr = SOURCE_TO_CORRECTED.get(t)
+        if not corr:
+            logger.warning("Pas de corrected_xxx pour '%s' règle ignorée", t)
+            return sql, False
+        stg_cur.execute("""
+            SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES
+            WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = %s
+        """, (corr,))
+        if stg_cur.fetchone()[0] == 0:
+            logger.warning(" Table '%s' absente du staging règle ignorée", corr)
+            return sql, False
+
+    rewritten = sql
+    for src, corr in sorted(SOURCE_TO_CORRECTED.items(), key=lambda x: -len(x[0])):
+        rewritten = re.sub(
             r'`?' + re.escape(src) + r'`?',
             f"`{corr}`",
-            sql
+            rewritten
         )
-    return sql
+
+    
+    src_hook = MySqlHook(mysql_conn_id="mysql_conn")
+    src_c    = src_hook.get_connection("mysql_conn")
+    src_db   = src_c.schema
+
+    for ref_table in REF_TABLES_SOURCE:
+        rewritten = re.sub(
+            r'`?' + re.escape(ref_table) + r'`?',
+            f"`{src_db}`.`{ref_table}`",
+            rewritten
+        )
+
+    return rewritten, True
 def _make_result(cnt_sql, ids_sql, params, ids_params, label, category):
     return {
         "cnt_sql":    cnt_sql,
@@ -118,7 +154,7 @@ def _make_result(cnt_sql, ids_sql, params, ids_params, label, category):
         "category":   category,
     }
 def _notnull(table, col, pk_col, pks, label=None, extra_cond=None):
-    bw, bp = _pk_where(pk_col, pks)
+    bw, bp = _pk_where(pk_col, pks) #morceau de clause WHERE et de params 
     parts  = [f"(`{col}` IS NULL OR TRIM(CAST(`{col}` AS CHAR)) = '')"]
     if extra_cond:
         parts.append(extra_cond)
@@ -151,7 +187,7 @@ def _regex(table, col, pk_col, pks, pattern, label=None):
     bw, bp = _pk_where(pk_col, pks)
     w_base = f"`{col}` IS NOT NULL AND `{col}` != '' AND `{col}` NOT REGEXP %s"
     w      = f"({w_base}) AND {bw}"
-    p      = [pattern] + bp
+    p      = [pattern] + bp #la liste des paramètres qui seront injectés dans la requête
     t      = f"`{table}`"
     return _make_result(
         f"SELECT COUNT(*) FROM {t} WHERE {w}",
@@ -223,26 +259,6 @@ def _compare_curdate(table, col, op, pk_col, pks,
         bp, bp,
         label or f"{col} {op} CURDATE()", category
     )
-
-
-def _both(table, col1, col2, pk_col, pks, label=None):
-    bw, bp = _pk_where(pk_col, pks)
-    w_base = (
-        f"(`{col1}` IS NOT NULL AND TRIM(CAST(`{col1}` AS CHAR)) != '' "
-        f"AND (`{col2}` IS NULL OR TRIM(CAST(`{col2}` AS CHAR)) = '')) "
-        f"OR (`{col2}` IS NOT NULL AND TRIM(CAST(`{col2}` AS CHAR)) != '' "
-        f"AND (`{col1}` IS NULL OR TRIM(CAST(`{col1}` AS CHAR)) = ''))"
-    )
-    w = f"({w_base}) AND {bw}"
-    t = f"`{table}`"
-    return _make_result(
-        f"SELECT COUNT(*) FROM {t} WHERE {w}",
-        f"SELECT `{pk_col}` FROM {t} WHERE {w} LIMIT {VIOLATION_FETCH_LIMIT}",
-        bp, bp,
-        label or f"{col1} BOTH {col2}", "COMPLETUDE"
-    )
-
-
 def _or_notnull(table, col1, col2, pk_col, pks, label=None):
     bw, bp = _pk_where(pk_col, pks)
     w_base = (
@@ -444,26 +460,22 @@ def load_correction_context(**context) -> None:
 
 
     if not detection_run_id:
-        raise ValueError("❌ 'detection_run_id' manquant")
+        raise ValueError(" 'detection_run_id' manquant")
     if not iteration_id:
-        raise ValueError("❌ 'detection_iteration_id' manquant")
+        raise ValueError(" 'detection_iteration_id' manquant")
 
     try:
         iteration_id = int(iteration_id)
     except (ValueError, TypeError) as e:
-        raise ValueError(f"❌ iteration_id non convertible : {e}")
-
-    # ✅ Créer conn et cur ICI, avant tout usage
+        raise ValueError(f" iteration_id non convertible : {e}")
     conn_info = _get_conn_info()
     conn      = _new_conn(conn_info)
     cur       = conn.cursor()
 
     try:
         
-        logger.info("📋 detection_run_id=%s | iteration_id=%s", 
+        logger.info(" detection_run_id=%s | iteration_id=%s", 
                     detection_run_id, iteration_id)
-
-        # ✅ REMPLACER PAR
         cur.execute("""
             SELECT
                 bdi.rule_id,
@@ -492,24 +504,34 @@ def load_correction_context(**context) -> None:
 
         if not check_rows:
             raise ValueError(
-                f"❌ Aucune inconsistance détectée pour run_id={detection_run_id}"
+                f"Aucune inconsistance détectée pour run_id={detection_run_id}"
             )
 
         rules = []
         for row in check_rows:
-            no_override = bool(row[8])
+            no_override = bool(row[8])#booléen indiquant s'il n'y a pas de regle active
             check_type  = "NOCHECK" if no_override else (row[4] or "NOCHECK")
             rules.append({
                 "detection_rule_id": row[0],
                 "rule_origin":       row[1] or "SAME",
-                "table_name":        row[6],   # corrected_xxx
+                "table_name":        row[6],   
                 "column_name":       row[7],
                 "check_type":        check_type,
                 "check_params":      row[5] or "",
                 "no_check":          no_override,
-                # src_table pour update bscs_detected_inconsistency
-                "src_table":         row[2],   # bscs_xxx original
+                "src_table":         row[2],   
             })
+        seen_rules = set()
+        rules_deduped = []
+        for r in rules:
+            key = (r["detection_rule_id"], r["rule_origin"], r["src_table"], r["column_name"])
+            if key in seen_rules:
+                logger.warning("⏭ Règle dupliquée ignorée : rule_id=%s | %s.%s",
+                            r["detection_rule_id"], r["src_table"], r["column_name"])
+                continue
+            seen_rules.add(key)
+            rules_deduped.append(r)
+        rules = rules_deduped    
 
         # PKs du batch
         cur.execute("""
@@ -518,21 +540,21 @@ def load_correction_context(**context) -> None:
             WHERE run_id = %s AND iteration_id = %s
         """, (detection_run_id, iteration_id))
         batch_pk_rows = cur.fetchall()
-        logger.info("📦 %d PKs dans bscs_detection_batch_pks pour run_id='%s'",
+        logger.info(" %d PKs dans bscs_detection_batch_pks pour run_id='%s'",
                     len(batch_pk_rows), detection_run_id)
-
+        #pk groupé et La table source bscs est traduite en corrected_
         pks_by_table = {}
         for tname, pk_val in batch_pk_rows:
             corr = SOURCE_TO_CORRECTED.get(tname.strip().lower(), tname)
             pks_by_table.setdefault(corr, []).append(pk_val)
-        logger.info("📦 pks_by_table : %s", {k: len(v) for k, v in pks_by_table.items()})
+        logger.info(" pks_by_table : %s", {k: len(v) for k, v in pks_by_table.items()})
 
-        # Index detected inconsistency
+        # Construit un dictionnaire d'index  pour trouver les entrées 
         cur.execute("""
             SELECT id, table_name, rule_id, rule_origin
             FROM bscs_detected_inconsistency
-            WHERE run_id = %s
-        """, (detection_run_id,))
+            WHERE run_id = %s AND iteration_id = %s
+        """, (detection_run_id,iteration_id))
         di_index = {}
         for di_id, tname, rid, rorigin in cur.fetchall():
             if rid is None:
@@ -556,7 +578,7 @@ def load_correction_context(**context) -> None:
 
     context["ti"].xcom_push(key="correction_context", value=payload)
     logger.info(
-        "✅ Context chargé — run=%s | iter=%s "
+        " Context chargé — run=%s | iter=%s "
         "| %d règles | %d tables | %d sans override",
         detection_run_id, iteration_id,
         len(rules),
@@ -575,9 +597,9 @@ def detect_after_correction(**context) -> None:
     rules            = payload["rules"]
     pks_by_table     = payload["pks_by_table"]
     stg_info         = _staging_conn_info()
-
-    # ── DIAGNOSTIC AU DÉMARRAGE ───────────────────────────────────────────
+    res_dict = None 
     try:
+        #lister toutes les clés primaires des tables corrected_ présentes dans le staging
         diag_conn = _new_conn(stg_info)
         diag_cur  = diag_conn.cursor()
         diag_cur.execute("SELECT DATABASE()")
@@ -601,7 +623,7 @@ def detect_after_correction(**context) -> None:
     except Exception as e:
         logger.error("❌ Erreur diagnostic PKs : %s", e)
 
-    # Purger les anciennes entrées
+    # supprimer les anciennes entrées
     try:
         dc = _new_conn(stg_info)
         dk = dc.cursor()
@@ -644,7 +666,7 @@ def detect_after_correction(**context) -> None:
                 "skip_reason":         "NO_BATCH",
             })
             continue
-
+        # Si la PK n'est pas définie dans le dictionnaire statique, on stocke None pour le savoir plus tard
         if corrected_table not in pk_cache:
             pk = CORRECTED_TABLE_PKS.get(corrected_table)
             if pk:
@@ -654,8 +676,11 @@ def detect_after_correction(**context) -> None:
                 pk_cache[corrected_table] = None
 
         pk_col = pk_cache.get(corrected_table)
-        # Règle sans check associé → marquer is_skipped=NO_RULE
-        if rule.get("no_check"):
+        rule_id_int = int(detection_rid) if detection_rid is not None else -1
+        catalog     = SAME_CATALOG if str(origin).upper() == "SAME" else DIFF_CATALOG
+        rule_fn     = catalog.get(rule_id_int)
+        # Règle sans check associé → marquer is_skipped=NO_OVERRIDE
+        if rule.get("no_check") and rule_fn is None:
             results.append({
                 "key":                 f"{corrected_table}||{detection_rid}||{origin}",
                 "src_table":           rule.get("src_table", 
@@ -675,7 +700,7 @@ def detect_after_correction(**context) -> None:
             })
             continue
         if not pk_col:
-            logger.warning("⚠️ PK manquante pour %s — règle ignorée", corrected_table)
+            logger.warning(" PK manquante pour %s — règle ignorée", corrected_table)
             results.append({
                 "key":                 f"{corrected_table}||{detection_rid}||{origin}",
                 "src_table": rule.get("src_table", 
@@ -695,39 +720,42 @@ def detect_after_correction(**context) -> None:
             })
             continue
 
-        res_dict = _build_post_check_query(
-            corrected_table, column, pk_col, pks,
-            check_type, check_params,
-            detection_rid, origin
-        )
-
-        if not res_dict:
-            logger.warning("⚠️ Pas de requête pour check_type=%s [%s.%s]",
-                        check_type, corrected_table, column)
-            results.append({
-                "key":                 f"{corrected_table}||{detection_rid}||{origin}",
-                "src_table":           corrected_table.replace("corrected_", "bscs_"),
-                "corr_table":          corrected_table,
-                "target_column":       column,
-                "rule_id":             detection_rid,
-                "rule_origin":         origin,
-                "rule_label":          column,
-                "category":            "UNKNOWN",
-                "count_source":        len(pks),
-                "nb_violations_after": 0,
-                "reliable":            True,
-                "pk_ids_after":        [],
-                "is_skipped":          True,
-                "skip_reason":         "BUILD_FAILED",
-            })
-            continue
-
         nb_viol      = 0
         pk_ids_after = []
 
         try:
             conn = _new_conn(stg_info)
-            cur  = conn.cursor()
+            cur  = conn.cursor()          
+            #Construction et exécution du check
+            res_dict = _build_post_check_query(
+                corrected_table, column, pk_col, pks,
+                check_type, check_params,
+                detection_rid, origin,
+                stg_cur=cur,             
+                src_conn_info=stg_info,
+            )
+            # Construction échoué
+            if not res_dict:
+                logger.warning("Pas de requête pour check_type=%s [%s.%s]",
+                            check_type, corrected_table, column)
+                results.append({
+                    "key":                 f"{corrected_table}||{detection_rid}||{origin}",
+                    "src_table":           corrected_table.replace("corrected_", "bscs_"),
+                    "corr_table":          corrected_table,
+                    "target_column":       column,
+                    "rule_id":             detection_rid,
+                    "rule_origin":         origin,
+                    "rule_label":          column,
+                    "category":            "UNKNOWN",
+                    "count_source":        len(pks),
+                    "nb_violations_after": 0,
+                    "reliable":            True,
+                    "pk_ids_after":        [],
+                    "is_skipped":          True,
+                    "skip_reason":         "BUILD_FAILED",
+                })
+                continue
+            #Exécution des requêtes Sql
             cur.execute(res_dict["cnt_sql"], res_dict["params"])
             nb_viol = cur.fetchone()[0]
             if nb_viol > 0 and res_dict.get("ids_sql"):
@@ -735,7 +763,9 @@ def detect_after_correction(**context) -> None:
                 pk_ids_after = [str(r[0]) for r in cur.fetchall()]
             cur.close()
             conn.close()
-
+            
+        
+            #insertion des résultats
             if pk_ids_after:
                 detection_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 ins_conn = _new_conn(stg_info)
@@ -755,11 +785,11 @@ def detect_after_correction(**context) -> None:
                 ins_cur.close()
                 ins_conn.close()
 
-            logger.info("  ✅ [%s] %s [%s] → %d/%d violations après correction",
+            logger.info("  [%s] %s [%s] → %d/%d violations après correction",
                         check_type, res_dict["label"], corrected_table, nb_viol, len(pks))
 
         except Exception as e:
-            logger.error("❌ Erreur check [%s.%s] type=%s : %s",
+            logger.error(" Erreur check [%s.%s] type=%s : %s",
                         corrected_table, column, check_type, e)
             nb_viol = -1
 
@@ -770,8 +800,8 @@ def detect_after_correction(**context) -> None:
             "target_column":       column,
             "rule_id":             detection_rid,
             "rule_origin":         origin,
-            "rule_label":          res_dict.get("label", column),
-            "category":            res_dict.get("category", "UNKNOWN"),
+            "rule_label": res_dict.get("label", column) if res_dict else column,
+            "category":   res_dict.get("category", "UNKNOWN") if res_dict else "UNKNOWN",
             "count_source":        len(pks),
             "nb_violations_after": max(nb_viol, 0),
             "reliable":            nb_viol >= 0,
@@ -779,222 +809,452 @@ def detect_after_correction(**context) -> None:
             "is_skipped":          False,
             "skip_reason":         None,
         })
-        # ── FIN DE BOUCLE — push résultats ───────────────────────────────────
     ti.xcom_push(key="detection_after_results", value=results)
     logger.info("🎉 Post-correction terminée : %d checks", len(results))
+def _build_post_check_query(
+    corrected_table, column, pk_col, pks,
+    check_type, check_params,
+    detection_rule_id, origin,
+    stg_cur=None,           
+    src_conn_info=None,     
+) -> dict | None:
+    
+    rule_id_int = int(detection_rule_id) if detection_rule_id is not None else -1
+    catalog     = SAME_CATALOG if str(origin).upper() == "SAME" else DIFF_CATALOG
+    rule_fn     = catalog.get(rule_id_int)
 
-def _build_post_check_query(table, col, pk_col, pks,
-                             check_type, check_params,
-                             detection_rule_id, origin) -> dict:
+    if rule_fn is not None and stg_cur is not None:
+        try:
+           
+            result = rule_fn(pk_col, pks)
+            if isinstance(result, tuple):
+                cnt_sql_raw, ids_sql_raw, params, ids_params = result
+                label    = f"{corrected_table}.{column} [catalogue]"
+                category = "COHERENCE_SEMANTIQUE"
+            else:
+                cnt_sql_raw  = result["cnt_sql"]
+                ids_sql_raw  = result["ids_sql"]
+                params       = result["params"]
+                ids_params   = result["ids_params"]
+                label        = result["label"]
+                category     = result["category"]
+
+            cnt_sql_rewritten, ok_cnt = _rewrite_sql_for_corrected_safe(
+                cnt_sql_raw, stg_cur, src_conn_info
+            )
+            ids_sql_rewritten, ok_ids = _rewrite_sql_for_corrected_safe(
+                ids_sql_raw, stg_cur, src_conn_info
+            )
+
+            if not ok_cnt or not ok_ids:
+                logger.warning(
+                    " Réécriture impossible pour règle %s [%s] → fallback check_type",
+                    rule_id_int, corrected_table
+                )
+            else:
+                if f"LIMIT {VIOLATION_FETCH_LIMIT}" not in ids_sql_rewritten:
+                    ids_sql_rewritten += f" LIMIT {VIOLATION_FETCH_LIMIT}"
+
+                return {
+                    "cnt_sql":    cnt_sql_rewritten,
+                    "ids_sql":    ids_sql_rewritten,
+                    "params":     result["params"],
+                    "ids_params": result["ids_params"],
+                    "label":      result["label"],
+                    "category":   result["category"],
+                }
+        except Exception as e:
+            logger.error(
+                " Erreur construction via catalogue [rule=%s | %s.%s] : %s",
+                rule_id_int, corrected_table, column, e
+            )
+
     bw, bp = _pk_where(pk_col, pks)
 
     if check_type == "NOTNULL":
-        w = f"(`{col}` IS NULL OR TRIM(`{col}`) = '') AND {bw}"
+        w = f"(`{column}` IS NULL OR TRIM(`{column}`) = '') AND {bw}"
         return _make_result(
-            f"SELECT COUNT(*) FROM `{table}` WHERE {w}",
-            f"SELECT `{pk_col}` FROM `{table}` WHERE {w} LIMIT {VIOLATION_FETCH_LIMIT}",
+            f"SELECT COUNT(*) FROM `{corrected_table}` WHERE {w}",
+            f"SELECT `{pk_col}` FROM `{corrected_table}` WHERE {w} LIMIT {VIOLATION_FETCH_LIMIT}",
             bp, bp,
-            f"{col} IS NOT NULL [post-correction]", "COMPLETUDE"
+            f"{column} IS NOT NULL [post-correction]", "COMPLETUDE"
         )
 
     if check_type == "IN_DOMAIN":
         vals = [v.strip() for v in check_params.split(",")]
         ph   = _ph(vals)
-        w    = f"`{col}` IS NOT NULL AND `{col}` NOT IN ({ph}) AND {bw}"
+        w    = f"`{column}` IS NOT NULL AND `{column}` NOT IN ({ph}) AND {bw}"
         p    = vals + bp
         return _make_result(
-            f"SELECT COUNT(*) FROM `{table}` WHERE {w}",
-            f"SELECT `{pk_col}` FROM `{table}` WHERE {w} LIMIT {VIOLATION_FETCH_LIMIT}",
+            f"SELECT COUNT(*) FROM `{corrected_table}` WHERE {w}",
+            f"SELECT `{pk_col}` FROM `{corrected_table}` WHERE {w} LIMIT {VIOLATION_FETCH_LIMIT}",
             p, p,
-            f"{col} IN ({check_params[:60]}) [Comarch]", "CONFORMITE_DOMAINE"
+            f"{column} IN ({check_params[:60]}) [Comarch]", "CONFORMITE_DOMAINE"
         )
-
+    
+    if check_type == "LENGTH":
+        if not check_params:
+            return None
+        ref_col = check_params.strip()
+        w = (
+            f"`{column}` IS NOT NULL AND `{ref_col}` IS NOT NULL "
+            f"AND LENGTH(`{column}`) >= LENGTH(`{ref_col}`) AND {bw}"
+        )
+        return _make_result(
+            f"SELECT COUNT(*) FROM `{corrected_table}` WHERE {w}",
+            f"SELECT `{pk_col}` FROM `{corrected_table}` WHERE {w} LIMIT {VIOLATION_FETCH_LIMIT}",
+            bp, bp,
+            f"LENGTH({column}) < LENGTH({ref_col}) [post-correction]", "COHERENCE_SEMANTIQUE"
+        )
     if check_type == "REGEX":
-        w = (f"`{col}` IS NOT NULL AND `{col}` != '' "
-             f"AND `{col}` NOT REGEXP %s AND {bw}")
+        w = (f"`{column}` IS NOT NULL AND `{column}` != '' "
+             f"AND `{column}` NOT REGEXP %s AND {bw}")
         p = [check_params] + bp
         return _make_result(
-            f"SELECT COUNT(*) FROM `{table}` WHERE {w}",
-            f"SELECT `{pk_col}` FROM `{table}` WHERE {w} LIMIT {VIOLATION_FETCH_LIMIT}",
+            f"SELECT COUNT(*) FROM `{corrected_table}` WHERE {w}",
+            f"SELECT `{pk_col}` FROM `{corrected_table}` WHERE {w} LIMIT {VIOLATION_FETCH_LIMIT}",
             p, p,
-            f"{col} REGEX [post-correction]", "CONFORMITE_FORMAT"
+            f"{column} REGEX [post-correction]", "CONFORMITE_FORMAT"
+        )
+    if check_type == "BOTH":
+        # Les deux colonnes doivent être renseignées ensemble
+        other_col = check_params.strip()
+        if not other_col:
+            return None
+        w = (
+            f"((`{column}` IS NOT NULL AND TRIM(CAST(`{column}` AS CHAR)) != '' "
+            f"AND (`{other_col}` IS NULL OR TRIM(CAST(`{other_col}` AS CHAR)) = '')) "
+            f"OR (`{other_col}` IS NOT NULL AND TRIM(CAST(`{other_col}` AS CHAR)) != '' "
+            f"AND (`{column}` IS NULL OR TRIM(CAST(`{column}` AS CHAR)) = ''))) "
+            f"AND {bw}"
+        )
+        return _make_result(
+            f"SELECT COUNT(*) FROM `{corrected_table}` WHERE {w}",
+            f"SELECT `{pk_col}` FROM `{corrected_table}` WHERE {w} LIMIT {VIOLATION_FETCH_LIMIT}",
+            bp, bp,
+            f"{column} BOTH {other_col} [post-correction]", "COMPLETUDE"
         )
 
+    
+
+    if check_type == "GT_IF_NN":
+        # col > val quand col n'est pas null
+        try:
+            val = check_params.strip()
+        except Exception:
+            return None
+        w = f"`{column}` IS NOT NULL AND `{column}` <= {val} AND {bw}"
+        return _make_result(
+            f"SELECT COUNT(*) FROM `{corrected_table}` WHERE {w}",
+            f"SELECT `{pk_col}` FROM `{corrected_table}` WHERE {w} LIMIT {VIOLATION_FETCH_LIMIT}",
+            bp, bp,
+            f"{column} > {val} IF NOT NULL [post-correction]", "VALIDITE_NUMERIQUE"
+        )
+
+    if check_type == "NOTNULL_IF":
+        # col ne peut pas être null si cond_col est renseigné
+        cond_col = check_params.strip()
+        if not cond_col:
+            return None
+        w = (
+            f"(`{cond_col}` IS NOT NULL AND TRIM(CAST(`{cond_col}` AS CHAR)) != '') "
+            f"AND (`{column}` IS NULL OR TRIM(CAST(`{column}` AS CHAR)) = '') "
+            f"AND {bw}"
+        )
+        return _make_result(
+            f"SELECT COUNT(*) FROM `{corrected_table}` WHERE {w}",
+            f"SELECT `{pk_col}` FROM `{corrected_table}` WHERE {w} LIMIT {VIOLATION_FETCH_LIMIT}",
+            bp, bp,
+            f"{column} NOTNULL IF {cond_col} [post-correction]", "COMPLETUDE"
+        )
+
+    if check_type == "DATE_MAX_FIELD":
+        # col doit être <= ref_col
+        ref_col = check_params.strip()
+        if not ref_col:
+            return None
+        w = (
+            f"`{column}` IS NOT NULL AND `{ref_col}` IS NOT NULL "
+            f"AND `{column}` > `{ref_col}` AND {bw}"
+        )
+        return _make_result(
+            f"SELECT COUNT(*) FROM `{corrected_table}` WHERE {w}",
+            f"SELECT `{pk_col}` FROM `{corrected_table}` WHERE {w} LIMIT {VIOLATION_FETCH_LIMIT}",
+            bp, bp,
+            f"{column} <= {ref_col} [post-correction]", "COHERENCE_TEMPORELLE"
+        )
+
+    if check_type == "CORRELATE_FIELD_VALUE":
+        # check_params = ref_col:trigger_val:expected_val
+        if not check_params or check_params.count(":") < 2:
+            return None
+        parts       = check_params.split(":", 2)
+        ref_col     = parts[0].strip()
+        trigger_val = parts[1].strip()
+        target_val  = parts[2].strip()
+        # Si numérique ne pas quoter
+        escaped = target_val if target_val.lstrip("-").isdigit() else f"'{target_val}'"
+        w = (
+            f"`{ref_col}` = '{trigger_val}' "
+            f"AND `{ref_col}` IS NOT NULL "
+            f"AND `{column}` != {escaped} "
+            f"AND {bw}"
+        )
+        return _make_result(
+            f"SELECT COUNT(*) FROM `{corrected_table}` WHERE {w}",
+            f"SELECT `{pk_col}` FROM `{corrected_table}` WHERE {w} LIMIT {VIOLATION_FETCH_LIMIT}",
+            bp, bp,
+            f"{column} = {target_val} WHEN {ref_col} = {trigger_val} [post-correction]",
+            "COHERENCE_SEMANTIQUE"
+        )
+
+    if check_type == "CORRELATE_MIN_VALUE":
+        # check_params = ref_col:trigger_val:min_val
+        if not check_params or check_params.count(":") < 2:
+            return None
+        parts       = check_params.split(":", 2)
+        ref_col     = parts[0].strip()
+        trigger_val = parts[1].strip()
+        min_val     = parts[2].strip()
+        w = (
+            f"`{ref_col}` = '{trigger_val}' "
+            f"AND `{ref_col}` IS NOT NULL "
+            f"AND (`{column}` IS NULL OR CAST(`{column}` AS DECIMAL(10,2)) < {min_val}) "
+            f"AND {bw}"
+        )
+        return _make_result(
+            f"SELECT COUNT(*) FROM `{corrected_table}` WHERE {w}",
+            f"SELECT `{pk_col}` FROM `{corrected_table}` WHERE {w} LIMIT {VIOLATION_FETCH_LIMIT}",
+            bp, bp,
+            f"{column} >= {min_val} WHEN {ref_col} = {trigger_val} [post-correction]",
+            "COHERENCE_SEMANTIQUE"
+        )
+
+    if check_type == "CROSS_COMPARE_COLS":
+        # check_params = ref_table:ref_col:join_col:op
+        if not check_params or check_params.count(":") < 3:
+            return None
+        parts         = check_params.split(":", 3)
+        ref_table_raw = parts[0].strip()
+        ref_col       = parts[1].strip()
+        join_col      = parts[2].strip()
+        op            = parts[3].strip()
+        ref_table_corr = SOURCE_TO_CORRECTED.get(ref_table_raw.lower(), ref_table_raw)
+        inv = {"<=": ">", ">=": "<", "<": ">=", ">": "<=", "=": "!=", "!=": "="}
+        inv_op = inv.get(op, "!=")
+        w = (
+            f"t1.`{column}` IS NOT NULL AND t2.`{ref_col}` IS NOT NULL "
+            f"AND t1.`{column}` {inv_op} t2.`{ref_col}` AND {bw}"
+        )
+        return _make_result(
+            f"SELECT COUNT(*) FROM `{corrected_table}` t1 "
+            f"JOIN `{ref_table_corr}` t2 ON t1.`{join_col}` = t2.`{join_col}` "
+            f"WHERE {w}",
+            f"SELECT t1.`{pk_col}` FROM `{corrected_table}` t1 "
+            f"JOIN `{ref_table_corr}` t2 ON t1.`{join_col}` = t2.`{join_col}` "
+            f"WHERE {w} LIMIT {VIOLATION_FETCH_LIMIT}",
+            bp, bp,
+            f"{column} {op} {ref_table_corr}.{ref_col} [post-correction]",
+            "COHERENCE_INTER_ENTITES"
+        )
     if check_type == "FIXED_LENGTH":
         try:
             length = int(check_params)
         except (ValueError, TypeError):
             logger.warning("⚠️ FIXED_LENGTH params invalide '%s' [%s.%s]",
-                           check_params, table, col)
+                           check_params, corrected_table, column)
             return None
-        w = f"`{col}` IS NOT NULL AND LENGTH(`{col}`) != {length} AND {bw}"
+        w = f"`{column}` IS NOT NULL AND LENGTH(`{column}`) != {length} AND {bw}"
         return _make_result(
-            f"SELECT COUNT(*) FROM `{table}` WHERE {w}",
-            f"SELECT `{pk_col}` FROM `{table}` WHERE {w} LIMIT {VIOLATION_FETCH_LIMIT}",
+            f"SELECT COUNT(*) FROM `{corrected_table}` WHERE {w}",
+            f"SELECT `{pk_col}` FROM `{corrected_table}` WHERE {w} LIMIT {VIOLATION_FETCH_LIMIT}",
             bp, bp,
-            f"LENGTH({col}) = {length} [post-correction]", "CONFORMITE_FORMAT"
+            f"LENGTH({column}) = {length} [post-correction]", "CONFORMITE_FORMAT"
         )
 
     if check_type == "COMPARE_VAL":
         if not check_params or "," not in check_params:
             logger.warning("⚠️ COMPARE_VAL params invalide '%s' [%s.%s]",
-                           check_params, table, col)
+                           check_params, corrected_table, column)
             return None
         parts  = check_params.split(",", 1)
         op     = parts[0].strip()
         val    = parts[1].strip()
-        inv    = {"<=": ">", ">=": "<", "<": ">=", ">": "<=",
-                  "=": "!=", "!=": "="}
+        inv    = {"<=": ">", ">=": "<", "<": ">=", ">": "<=", "=": "!=", "!=": "="}
         inv_op = inv.get(op, "!=")
-        w = f"`{col}` IS NOT NULL AND `{col}` {inv_op} %s AND {bw}"
+        w = f"`{column}` IS NOT NULL AND `{column}` {inv_op} %s AND {bw}"
         p = [val] + bp
         return _make_result(
-            f"SELECT COUNT(*) FROM `{table}` WHERE {w}",
-            f"SELECT `{pk_col}` FROM `{table}` WHERE {w} LIMIT {VIOLATION_FETCH_LIMIT}",
+            f"SELECT COUNT(*) FROM `{corrected_table}` WHERE {w}",
+            f"SELECT `{pk_col}` FROM `{corrected_table}` WHERE {w} LIMIT {VIOLATION_FETCH_LIMIT}",
             p, p,
-            f"{col} {op} {val} [post-correction]", "VALIDITE_NUMERIQUE"
+            f"{column} {op} {val} [post-correction]", "VALIDITE_NUMERIQUE"
         )
 
     if check_type == "COMPARE_COLS":
         if not check_params or check_params.count(",") < 2:
             logger.warning("⚠️ COMPARE_COLS params invalide '%s' [%s.%s]",
-                           check_params, table, col)
+                           check_params, corrected_table, column)
             return None
         parts  = check_params.split(",", 2)
         c1     = parts[0].strip()
         op     = parts[1].strip()
         c2     = parts[2].strip()
-        inv    = {"<=": ">", ">=": "<", "<": ">=", ">": "<=",
-                  "=": "!=", "!=": "="}
+        inv    = {"<=": ">", ">=": "<", "<": ">=", ">": "<=", "=": "!=", "!=": "="}
         inv_op = inv.get(op, "!=")
         w = (f"`{c1}` IS NOT NULL AND `{c2}` IS NOT NULL "
              f"AND `{c1}` {inv_op} `{c2}` AND {bw}")
         return _make_result(
-            f"SELECT COUNT(*) FROM `{table}` WHERE {w}",
-            f"SELECT `{pk_col}` FROM `{table}` WHERE {w} LIMIT {VIOLATION_FETCH_LIMIT}",
+            f"SELECT COUNT(*) FROM `{corrected_table}` WHERE {w}",
+            f"SELECT `{pk_col}` FROM `{corrected_table}` WHERE {w} LIMIT {VIOLATION_FETCH_LIMIT}",
             bp, bp,
             f"{c1} {op} {c2} [post-correction]", "COHERENCE_SEMANTIQUE"
         )
 
     if check_type == "COMPARE_CURDATE":
         if not check_params:
-            logger.warning("⚠️ COMPARE_CURDATE params vide [%s.%s]", table, col)
             return None
         op     = check_params.strip()
         inv    = {"<=": ">", ">=": "<", "<": ">=", ">": "<="}
         inv_op = inv.get(op, ">")
-        w = f"`{col}` IS NOT NULL AND `{col}` {inv_op} CURDATE() AND {bw}"
+        w = f"`{column}` IS NOT NULL AND `{column}` {inv_op} CURDATE() AND {bw}"
         return _make_result(
-            f"SELECT COUNT(*) FROM `{table}` WHERE {w}",
-            f"SELECT `{pk_col}` FROM `{table}` WHERE {w} LIMIT {VIOLATION_FETCH_LIMIT}",
+            f"SELECT COUNT(*) FROM `{corrected_table}` WHERE {w}",
+            f"SELECT `{pk_col}` FROM `{corrected_table}` WHERE {w} LIMIT {VIOLATION_FETCH_LIMIT}",
             bp, bp,
-            f"{col} {op} CURDATE() [post-correction]", "VALIDITE_TEMPORELLE"
+            f"{column} {op} CURDATE() [post-correction]", "VALIDITE_TEMPORELLE"
         )
-
+    if check_type == "COMPUTE_CHECK":
+        if not check_params:
+            return None
+        if "INITAMOUNT" in check_params and "EXCHANGERATEVALUE" in check_params:
+            w = (
+                f"`CURRENCYINITAMOUNT` IS NOT NULL "
+                f"AND `INITAMOUNT` IS NOT NULL "
+                f"AND `EXCHANGERATEVALUE` IS NOT NULL "
+                f"AND ABS(`CURRENCYINITAMOUNT` - (`INITAMOUNT` * `EXCHANGERATEVALUE`)) > 0.01 "
+                f"AND {bw}"
+            )
+            return _make_result(
+                f"SELECT COUNT(*) FROM `{corrected_table}` WHERE {w}",
+                f"SELECT `{pk_col}` FROM `{corrected_table}` WHERE {w} LIMIT {VIOLATION_FETCH_LIMIT}",
+                bp, bp,
+                "CURRENCYINITAMOUNT cohérent avec INITAMOUNT * EXCHANGERATEVALUE [post-correction]",
+                "COHERENCE_SEMANTIQUE"
+            )
     if check_type == "AGE_CHECK":
         age = check_params.strip() if check_params else "18"
-        w = (f"`{col}` IS NOT NULL "
-             f"AND `{col}` > DATE_SUB(CURDATE(), INTERVAL {age} YEAR) "
-             f"AND {bw}")
+        w = (f"`{column}` IS NOT NULL "
+             f"AND `{column}` > DATE_SUB(CURDATE(), INTERVAL {age} YEAR) AND {bw}")
         return _make_result(
-            f"SELECT COUNT(*) FROM `{table}` WHERE {w}",
-            f"SELECT `{pk_col}` FROM `{table}` WHERE {w} LIMIT {VIOLATION_FETCH_LIMIT}",
+            f"SELECT COUNT(*) FROM `{corrected_table}` WHERE {w}",
+            f"SELECT `{pk_col}` FROM `{corrected_table}` WHERE {w} LIMIT {VIOLATION_FETCH_LIMIT}",
             bp, bp,
-            f"{col} AGE >= {age} ans [post-correction]", "VALIDITE_TEMPORELLE"
+            f"{column} AGE >= {age} ans [post-correction]", "VALIDITE_TEMPORELLE"
         )
 
     if check_type == "UNIQUE_CHECK":
-        w = (f"`{col}` IN "
-             f"(SELECT `{col}` FROM `{table}` "
-             f"GROUP BY `{col}` HAVING COUNT(*) > 1) AND {bw}")
+        w = (f"`{column}` IN "
+             f"(SELECT `{column}` FROM `{corrected_table}` "
+             f"GROUP BY `{column}` HAVING COUNT(*) > 1) AND {bw}")
         return _make_result(
-            f"SELECT COUNT(*) FROM `{table}` WHERE {w}",
-            f"SELECT `{pk_col}` FROM `{table}` WHERE {w} LIMIT {VIOLATION_FETCH_LIMIT}",
+            f"SELECT COUNT(*) FROM `{corrected_table}` WHERE {w}",
+            f"SELECT `{pk_col}` FROM `{corrected_table}` WHERE {w} LIMIT {VIOLATION_FETCH_LIMIT}",
             bp, bp,
-            f"{col} UNIQUE [post-correction]", "UNICITE"
+            f"{column} UNIQUE [post-correction]", "UNICITE"
         )
 
     if check_type == "FK_CHECK":
         if not check_params or ":" not in check_params:
-            logger.warning("⚠️ FK_CHECK params invalide '%s' [%s.%s]",
-                           check_params, table, col)
             return None
         ref_table_raw, ref_col = check_params.split(":", 1)
-        ref_table_raw = ref_table_raw.strip()
-        ref_col       = ref_col.strip()
-        # Résoudre bscs_xxx → corrected_xxx
-        ref_table_corr = SOURCE_TO_CORRECTED.get(
-            ref_table_raw.lower(),
-            ref_table_raw
-        )
-        # Garde : si la table référencée est vide → skip (faux positifs)
+        ref_table_raw  = ref_table_raw.strip()
+        ref_table_corr = SOURCE_TO_CORRECTED.get(ref_table_raw.lower(), ref_table_raw)
         w = (
-            f"`{col}` IS NOT NULL AND TRIM(CAST(`{col}` AS CHAR)) != '' "
+            f"`{column}` IS NOT NULL AND TRIM(CAST(`{column}` AS CHAR)) != '' "
             f"AND (SELECT COUNT(*) FROM `{ref_table_corr}`) > 0 "
-            f"AND CAST(`{col}` AS CHAR) NOT IN ("
+            f"AND CAST(`{column}` AS CHAR) NOT IN ("
             f"SELECT CAST(`{ref_col}` AS CHAR) FROM `{ref_table_corr}` "
-            f"WHERE `{ref_col}` IS NOT NULL) "
-            f"AND {bw}"
+            f"WHERE `{ref_col}` IS NOT NULL) AND {bw}"
         )
         return _make_result(
-            f"SELECT COUNT(*) FROM `{table}` WHERE {w}",
-            f"SELECT `{pk_col}` FROM `{table}` WHERE {w} LIMIT {VIOLATION_FETCH_LIMIT}",
+            f"SELECT COUNT(*) FROM `{corrected_table}` WHERE {w}",
+            f"SELECT `{pk_col}` FROM `{corrected_table}` WHERE {w} LIMIT {VIOLATION_FETCH_LIMIT}",
             bp, bp,
-            f"{col} FK→{ref_table_corr}.{ref_col} [post-correction]",
+            f"{column} FK→{ref_table_corr}.{ref_col} [post-correction]",
             "INTEGRITE_REFERENTIELLE"
         )
 
     if check_type == "REF_CHECK":
         if not check_params or ":" not in check_params:
-            logger.warning("⚠️ REF_CHECK params invalide '%s' [%s.%s]",
-                           check_params, table, col)
             return None
         ref_table_raw, ref_col = check_params.split(":", 1)
         ref_table_raw = ref_table_raw.strip()
-        ref_col       = ref_col.strip()
-        ref_full = REF_TABLES.get(ref_table_raw, f"`{ref_table_raw}`")
+        # Qualifier avec la base source pour cross-db
+        src_hook = MySqlHook(mysql_conn_id="mysql_conn")
+        src_c    = src_hook.get_connection("mysql_conn")
+        ref_full = f"`{src_c.schema}`.`{ref_table_raw}`"
         w = (
-            f"`{col}` IS NOT NULL AND TRIM(`{col}`) != '' "
-            f"AND UPPER(TRIM(`{col}`)) NOT IN ("
+            f"`{column}` IS NOT NULL AND TRIM(`{column}`) != '' "
+            f"AND UPPER(TRIM(`{column}`)) NOT IN ("
             f"SELECT UPPER(TRIM(`{ref_col}`)) FROM {ref_full} "
-            f"WHERE `{ref_col}` IS NOT NULL) "
-            f"AND {bw}"
+            f"WHERE `{ref_col}` IS NOT NULL) AND {bw}"
         )
         return _make_result(
-            f"SELECT COUNT(*) FROM `{table}` WHERE {w}",
-            f"SELECT `{pk_col}` FROM `{table}` WHERE {w} LIMIT {VIOLATION_FETCH_LIMIT}",
+            f"SELECT COUNT(*) FROM `{corrected_table}` WHERE {w}",
+            f"SELECT `{pk_col}` FROM `{corrected_table}` WHERE {w} LIMIT {VIOLATION_FETCH_LIMIT}",
             bp, bp,
-            f"{col} REF→{ref_table_raw}.{ref_col} [post-correction]",
+            f"{column} REF→{ref_table_raw}.{ref_col} [post-correction]",
             "CONFORMITE_REFERENTIEL"
         )
 
     if check_type == "CORRELATE":
-        if not check_params or ":" not in check_params:
-            logger.warning("⚠️ CORRELATE params invalide '%s' [%s.%s]",
-                           check_params, table, col)
+        if not check_params or check_params.count(":") < 2:
             return None
-        parts = check_params.split(":", 2)
-        if len(parts) < 3:
-            logger.warning("⚠️ CORRELATE params incomplet '%s' [%s.%s]",
-                           check_params, table, col)
-            return None
+        parts      = check_params.split(":", 2)
         date_col   = parts[0].strip()
         status_ok  = parts[1].strip()
-        status_ko  = parts[2].strip()
         w = (
-            f"`{col}` = '{status_ok}' "
+            f"`{column}` = '{status_ok}' "
             f"AND `{date_col}` > CURDATE() "
-            f"AND `{date_col}` IS NOT NULL "
-            f"AND {bw}"
+            f"AND `{date_col}` IS NOT NULL AND {bw}"
         )
         return _make_result(
-            f"SELECT COUNT(*) FROM `{table}` WHERE {w}",
-            f"SELECT `{pk_col}` FROM `{table}` WHERE {w} LIMIT {VIOLATION_FETCH_LIMIT}",
+            f"SELECT COUNT(*) FROM `{corrected_table}` WHERE {w}",
+            f"SELECT `{pk_col}` FROM `{corrected_table}` WHERE {w} LIMIT {VIOLATION_FETCH_LIMIT}",
             bp, bp,
-            f"{col} CORRELATE {date_col} [post-correction]", "COHERENCE_SEMANTIQUE"
+            f"{column} CORRELATE {date_col} [post-correction]", "COHERENCE_SEMANTIQUE"
+        )
+    if check_type == "CROSS_COMPARE_COLS":
+        if not check_params or check_params.count(":") < 3:
+            return None
+        parts = check_params.split(":", 3)
+        ref_table_raw = parts[0].strip()
+        ref_col       = parts[1].strip()
+        join_col      = parts[2].strip()
+        op            = parts[3].strip()
+        ref_table_corr = SOURCE_TO_CORRECTED.get(
+            ref_table_raw.lower(), ref_table_raw
+        )
+        inv = {"<=": ">", ">=": "<", "<": ">=", ">": "<=", "=": "!=", "!=": "="}
+        inv_op = inv.get(op, "!=")
+        w = (
+            f"t1.`{column}` IS NOT NULL AND t2.`{ref_col}` IS NOT NULL "
+            f"AND t1.`{column}` {inv_op} t2.`{ref_col}` AND {bw}"
+        )
+        return _make_result(
+            f"SELECT COUNT(*) FROM `{corrected_table}` t1 "
+            f"JOIN `{ref_table_corr}` t2 ON t1.`{join_col}` = t2.`{join_col}` "
+            f"WHERE {w}",
+            f"SELECT t1.`{pk_col}` FROM `{corrected_table}` t1 "
+            f"JOIN `{ref_table_corr}` t2 ON t1.`{join_col}` = t2.`{join_col}` "
+            f"WHERE {w} LIMIT {VIOLATION_FETCH_LIMIT}",
+            bp, bp,
+            f"{column} {op} {ref_table_corr}.{ref_col} [post-correction]",
+            "COHERENCE_INTER_ENTITES"
         )
 
-    logger.warning("⚠️ check_type='%s' non géré [%s.%s]", check_type, table, col)
+    logger.warning(" check_type='%s' non géré [%s.%s]", check_type, corrected_table, column)
     return None
 def update_inconsistency(**context) -> None:
     ti      = context["ti"]
@@ -1051,19 +1311,19 @@ def update_inconsistency(**context) -> None:
             skip_reason = res.get("skip_reason", None)
 
             if not rule_id:
-                logger.warning("⚠️ rule_id manquant pour [%s.%s] — ignoré", src_table, column)
+                logger.warning(" rule_id manquant pour [%s.%s] — ignoré", src_table, column)
                 skipped += 1
                 continue
 
             if not res.get("reliable", True):
-                logger.warning("⚠️ Résultat non fiable [%s.%s] — update ignoré", src_table, column)
+                logger.warning(" Résultat non fiable [%s.%s] — update ignoré", src_table, column)
                 skipped += 1
                 continue
 
             # Séparer les UPDATE selon is_skipped
             if is_skipped:
                 if not rule_id:
-                    logger.warning("⚠️ rule_id manquant pour skipped [%s.%s] — ignoré", src_table, column)
+                    logger.warning(" rule_id manquant pour skipped [%s.%s] — ignoré", src_table, column)
                     skipped += 1
                     continue
                 try:
@@ -1077,11 +1337,13 @@ def update_inconsistency(**context) -> None:
                         AND rule_origin = %s
                         AND table_name  = %s
                         AND column_name = %s
-                        AND error_category != 'POST_CORRECTION'
+                        
+                        AND iteration_id = %s
+                        
                     """, (
                         True, skip_reason,
                         detection_run_id, rule_id, origin,
-                        src_table, column,
+                        src_table, column,iteration_id
                     ))
                     rows_affected = cur.rowcount
                     if rows_affected == 0:
@@ -1094,10 +1356,25 @@ def update_inconsistency(**context) -> None:
                 except Exception as e:
                     logger.error("❌ UPDATE skipped [rule_id=%s | %s.%s] : %s", rule_id, src_table, column, e)
                     skipped += 1
-                continue  # ← pas de calcul de taux etc.
-
+                continue 
             # UPDATE normal (règle exécutée)
             try:
+                logger.info(
+                    "🔍 UPDATE WHERE: run=%s | rule_id=%s | origin=%s | table=%s | col=%s | iter=%s",
+                    detection_run_id, rule_id, origin, src_table, column, iteration_id
+                )
+                cur.execute("""
+                    SELECT id, rule_id, rule_origin, table_name, column_name, iteration_id
+                    FROM bscs_detected_inconsistency
+                    WHERE run_id     = %s
+                    AND rule_id      = %s
+                    AND rule_origin  = %s
+                    AND table_name   = %s
+                    AND column_name  = %s
+                    AND iteration_id = %s
+                """, (detection_run_id, rule_id, origin, src_table, column, iteration_id))
+                debug_row = cur.fetchone()
+                logger.info("🔍 Ligne trouvée : %s", debug_row)
                 cur.execute("""
                     UPDATE bscs_detected_inconsistency
                     SET nb_violations_after = %s,
@@ -1112,13 +1389,13 @@ def update_inconsistency(**context) -> None:
                     AND rule_origin = %s
                     AND table_name  = %s
                     AND column_name = %s
-                    AND error_category != 'POST_CORRECTION'
+                    AND iteration_id = %s
                 """, (
                     viol_after, nb_to_correct_after, nb_to_migrate_after , taux_after,
                     detection_run_id, rule_id, origin,
-                    src_table, column,
+                    src_table, column,iteration_id,
                 ))
-                # ... reste du code identique
+              
 
                 rows_affected = cur.rowcount
                 if rows_affected == 0:
@@ -1154,6 +1431,7 @@ def update_inconsistency(**context) -> None:
         logger.info("=" * 70)
 
         by_table = {}
+        
         for res in results:
             t = res.get("src_table", "?")
             by_table.setdefault(t, {"total": 0, "viol": 0, "ok": 0})

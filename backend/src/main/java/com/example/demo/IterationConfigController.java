@@ -19,10 +19,6 @@ import java.util.Base64;
 @RequestMapping("/api/iterations")
 @CrossOrigin(origins = "http://localhost:5173", allowCredentials = "true")
 public class IterationConfigController {
-
-    // ─── Injection ────────────────────────────────────────────
-    @Autowired
-    private InconsistencyRepository inconsistencyRepository;
     @Autowired
     private IterationConfigRepository iterationConfigRepository;
 
@@ -49,9 +45,7 @@ public class IterationConfigController {
 
     private static final Logger log = Logger.getLogger(IterationConfigController.class.getName());
 
-    /**
-     * RestTemplate avec Apache HttpClient — obligatoire pour supporter PATCH.
-     */
+   
     private RestTemplate buildRestTemplate() {
         HttpComponentsClientHttpRequestFactory factory = new HttpComponentsClientHttpRequestFactory();
         factory.setConnectTimeout(airflowConnectTimeout);
@@ -59,7 +53,7 @@ public class IterationConfigController {
         return new RestTemplate(factory);
     }
 
-    // ─── Tables exclues ────────────────────────────────────────
+
 
     private static final Set<String> EXCLUDED_TABLES = Set.of(
             "bscs_detected_inconsistency", "bscs_quality_run", "bscs_problematic_rows",
@@ -85,96 +79,132 @@ public class IterationConfigController {
     }
     @GetMapping("/list")
     public ResponseEntity<Map<String, Object>> listIterations() {
-        Map<String, Object> response = new java.util.LinkedHashMap<>();
-        try {
-            // Récupérer les IDs distincts depuis bscs_detected_inconsistency
-            List<Integer> iterationIds = inconsistencyRepository.findAllIterationIds();
+    Map<String, Object> response = new java.util.LinkedHashMap<>();
+    try (Connection conn = dataSource.getConnection()) {
 
-            // Pour chaque itération, récupérer les runs distincts
-            List<Map<String, Object>> iterations = new java.util.ArrayList<>();
-            for (Integer iterId : iterationIds) {
-                List<Object[]> runs = inconsistencyRepository.findRunsByIterationId(iterId);
-                List<Map<String, Object>> runList = new java.util.ArrayList<>();
-                for (Object[] row : runs) {
-                    Map<String, Object> run = new java.util.LinkedHashMap<>();
-                    run.put("runId", row[0]);
-                    run.put("executionDate", row[1]);
-                    runList.add(run);
+        String sql = """
+            SELECT 
+                i.iteration_id,
+                i.run_id,
+                i.execution_date,
+                COALESCE((
+                    SELECT MAX(ic.has_correction)
+                    FROM bscs_iteration_config ic
+                    WHERE ic.iteration_id = i.iteration_id
+                ), 0) as has_correction
+            FROM (
+                SELECT DISTINCT iteration_id, run_id, execution_date
+                FROM bscs_detected_inconsistency
+            ) i
+            ORDER BY i.iteration_id DESC, i.execution_date DESC
+        """;
+
+        Map<Integer, Map<String, Object>> iterMap = new java.util.LinkedHashMap<>();
+
+        try (PreparedStatement ps = conn.prepareStatement(sql);
+             ResultSet rs = ps.executeQuery()) {
+            while (rs.next()) {
+                Integer iterId = rs.getInt("iteration_id");
+                boolean hasCorrection = rs.getBoolean("has_correction");
+
+                if (!iterMap.containsKey(iterId)) {
+                    Map<String, Object> iter = new java.util.LinkedHashMap<>();
+                    iter.put("iterationId", iterId);
+                    iter.put("hasCorrection", hasCorrection); 
+                    iter.put("runs", new java.util.ArrayList<>());
+                    iterMap.put(iterId, iter);
                 }
-                Map<String, Object> iter = new java.util.LinkedHashMap<>();
-                iter.put("iterationId", iterId);
-                iter.put("runs", runList);
-                iterations.add(iter);
+
+                Map<String, Object> run = new java.util.LinkedHashMap<>();
+                run.put("runId", rs.getString("run_id"));
+                run.put("executionDate", rs.getTimestamp("execution_date"));
+
+                @SuppressWarnings("unchecked")
+                List<Map<String, Object>> runs = 
+                    (List<Map<String, Object>>) iterMap.get(iterId).get("runs");
+                runs.add(run);
             }
-
-            response.put("success", true);
-            response.put("iterations", iterations);
-            return ResponseEntity.ok(response);
-
-        } catch (Exception e) {
-            response.put("success", false);
-            response.put("error", e.getMessage());
-            return ResponseEntity.internalServerError().body(response);
         }
+
+        response.put("success", true);
+        response.put("iterations", new java.util.ArrayList<>(iterMap.values()));
+        return ResponseEntity.ok(response);
+
+    } catch (Exception e) {
+        response.put("success", false);
+        response.put("error", e.getMessage());
+        return ResponseEntity.internalServerError().body(response);
     }
+}
     @GetMapping("/available-tables")
-    public ResponseEntity<Map<String, Object>> getAvailableTables() {
-        Map<String, Object> response = new LinkedHashMap<>();
-        try (Connection conn = dataSource.getConnection()) {
+public ResponseEntity<Map<String, Object>> getAvailableTables() {
+    Map<String, Object> response = new LinkedHashMap<>();
+    try (Connection conn = dataSource.getConnection()) {
 
-            String currentSchema;
-            try (Statement st = conn.createStatement();
-                 ResultSet rs = st.executeQuery("SELECT DATABASE()")) {
-                rs.next();
-                currentSchema = rs.getString(1);
-            }
-
-            String placeholders = BUSINESS_TABLES.stream()
-                    .map(t -> "?").collect(Collectors.joining(", "));
-
-            String sql = String.format("""
-                SELECT TABLE_NAME, TABLE_ROWS, TABLE_COMMENT
-                FROM INFORMATION_SCHEMA.TABLES
-                WHERE TABLE_SCHEMA = ?
-                  AND TABLE_TYPE = 'BASE TABLE'
-                  AND LOWER(TABLE_NAME) IN (%s)
-                ORDER BY TABLE_NAME
-            """, placeholders);
-
-            List<Object> params = new ArrayList<>();
-            params.add(currentSchema);
-            params.addAll(BUSINESS_TABLES.stream()
-                    .map(String::toLowerCase)
-                    .collect(Collectors.toList()));
-
-            List<Map<String, Object>> tables = new ArrayList<>();
-            try (PreparedStatement ps = conn.prepareStatement(sql)) {
-                for (int i = 0; i < params.size(); i++) {
-                    ps.setObject(i + 1, params.get(i));
-                }
-                try (ResultSet rs = ps.executeQuery()) {
-                    while (rs.next()) {
-                        Map<String, Object> tableInfo = new LinkedHashMap<>();
-                        tableInfo.put("tableName",     rs.getString("TABLE_NAME"));
-                        tableInfo.put("estimatedRows", rs.getLong("TABLE_ROWS"));
-                        tableInfo.put("comment",       rs.getString("TABLE_COMMENT"));
-                        tables.add(tableInfo);
-                    }
-                }
-            }
-
-            response.put("success",     true);
-            response.put("schema",      currentSchema);
-            response.put("tables",      tables);
-            response.put("totalTables", tables.size());
-            return ResponseEntity.ok(response);
-
-        } catch (Exception e) {
-            response.put("success", false);
-            response.put("error", "Erreur récupération tables: " + e.getMessage());
-            return ResponseEntity.internalServerError().body(response);
+        String currentSchema;
+        try (Statement st = conn.createStatement();
+             ResultSet rs = st.executeQuery("SELECT DATABASE()")) {
+            rs.next();
+            currentSchema = rs.getString(1);
         }
+        String placeholders = BUSINESS_TABLES.stream()
+                .map(t -> "?").collect(Collectors.joining(", "));
+
+        String sql = String.format("""
+            SELECT TABLE_NAME, TABLE_COMMENT
+            FROM INFORMATION_SCHEMA.TABLES
+            WHERE TABLE_SCHEMA = ?
+              AND TABLE_TYPE = 'BASE TABLE'
+              AND LOWER(TABLE_NAME) IN (%s)
+            ORDER BY TABLE_NAME
+        """, placeholders);
+
+        List<String> foundTables = new ArrayList<>();
+        Map<String, String> tableComments = new LinkedHashMap<>();
+
+        List<Object> params = new ArrayList<>();
+        params.add(currentSchema);
+        params.addAll(BUSINESS_TABLES.stream()
+                .map(String::toLowerCase)
+                .collect(Collectors.toList()));
+
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            for (int i = 0; i < params.size(); i++) ps.setObject(i + 1, params.get(i));
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    String name = rs.getString("TABLE_NAME");
+                    foundTables.add(name);
+                    tableComments.put(name, rs.getString("TABLE_COMMENT"));
+                }
+            }
+        }
+        List<Map<String, Object>> tables = new ArrayList<>();
+        for (String tableName : foundTables) {
+            long realCount = 0;
+            try (Statement st = conn.createStatement();
+                 ResultSet rs = st.executeQuery("SELECT COUNT(*) FROM `" + tableName + "`")) {
+                if (rs.next()) realCount = rs.getLong(1);
+            }
+
+            Map<String, Object> tableInfo = new LinkedHashMap<>();
+            tableInfo.put("tableName",    tableName);
+            tableInfo.put("estimatedRows", realCount); // ← maintenant c'est EXACT ✅
+            tableInfo.put("comment",      tableComments.get(tableName));
+            tables.add(tableInfo);
+        }
+
+        response.put("success",     true);
+        response.put("schema",      currentSchema);
+        response.put("tables",      tables);
+        response.put("totalTables", tables.size());
+        return ResponseEntity.ok(response);
+
+    } catch (Exception e) {
+        response.put("success", false);
+        response.put("error", "Erreur récupération tables: " + e.getMessage());
+        return ResponseEntity.internalServerError().body(response);
     }
+}
 
 
     @GetMapping("/available-tables/{tableName}/rules")
@@ -259,117 +289,123 @@ public class IterationConfigController {
         }
     }
 
-    // ════════════════════════════════════════════════════════════════
-    // ENDPOINT 4 : Sauvegarder le plan de correction
-    // ════════════════════════════════════════════════════════════════
+  
+ @PostMapping("/correction-plan")
+public ResponseEntity<Map<String, Object>> saveCorrectionPlan(
+        @RequestBody Map<String, Object> requestBody) {
 
-    @PostMapping("/correction-plan")
-    public ResponseEntity<Map<String, Object>> saveCorrectionPlan(
-            @RequestBody Map<String, Object> requestBody) {
+    Map<String, Object> response = new HashMap<>();
+    try {
+        Integer targetIterationId = (Integer) requestBody.get("targetIterationId");
+        String  selectedBy        = (String)  requestBody.get("selectedBy");
 
-        Map<String, Object> response = new HashMap<>();
-        try {
-            Integer sourceIterationId = (Integer) requestBody.get("sourceIterationId");
-            Integer targetIterationId = (Integer) requestBody.get("targetIterationId");
-            String  selectedBy        = (String)  requestBody.get("selectedBy");
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> itemsToCorrect =
+                (List<Map<String, Object>>) requestBody.get("itemsToCorrect");
 
-            @SuppressWarnings("unchecked")
-            List<Map<String, Object>> itemsToCorrect =
-                    (List<Map<String, Object>>) requestBody.get("itemsToCorrect");
-
-            if (sourceIterationId == null || targetIterationId == null) {
-                response.put("success", false);
-                response.put("error", "sourceIterationId et targetIterationId sont requis");
-                return ResponseEntity.badRequest().body(response);
-            }
-
-            // Supprimer ancienne config pour cette itération
-            iterationConfigRepository.deleteByIterationId(targetIterationId);
-
-            LocalDateTime now = LocalDateTime.now();
-            List<BscsIterationConfig> configsToSave = new ArrayList<>();
-
-            for (Map<String, Object> item : itemsToCorrect) {
-                String  tableName  = item.get("tableName") != null
-                        ? ((String) item.get("tableName")).trim().toLowerCase() : null;
-                String  columnName = (String)  item.get("columnName");
-                String  rule       = (String)  item.get("rule");
-
-                String ruleOrigin = (String) item.get("ruleOrigin");
-                if (ruleOrigin == null || ruleOrigin.trim().isEmpty()) {
-                    ruleOrigin = "UNKNOWN";
-                } else {
-                    ruleOrigin = ruleOrigin.toUpperCase();
-                    if (!ruleOrigin.equals("SAME") && !ruleOrigin.equals("DIFF")) {
-                        ruleOrigin = "UNKNOWN";
-                    }
-                }
-
-                Integer ruleId = null;
-                if (item.get("ruleId") != null) {
-                    try {
-                        ruleId = ((Number) item.get("ruleId")).intValue();
-                    } catch (Exception e) {
-                        log.warning("ruleId invalide pour " + tableName + "." + columnName);
-                    }
-                }
-
-                Integer batchSize  = item.get("batchSize") != null
-                        ? ((Number) item.get("batchSize")).intValue() : 0;
-
-                boolean exists = iterationConfigRepository
-                        .existsByIterationIdAndTableNameAndColumnNameAndRule(
-                                targetIterationId, tableName, columnName, rule);
-
-                if (!exists) {
-                    BscsIterationConfig config = new BscsIterationConfig();
-                    config.setIterationId(targetIterationId);
-                    config.setTableName(tableName);
-                    config.setColumnName(columnName);
-                    config.setRule(rule);
-                    config.setRuleOrigin(ruleOrigin);
-                    config.setRuleId(ruleId);
-                    config.setFlagToCheck(true);
-                    config.setSelectedBy(selectedBy != null ? selectedBy : "agent");
-                    config.setSelectedAt(now);
-                    config.setBatchSize(batchSize);
-                    config.setOffsetCurrent(0);
-                    config.setRunId("PLAN_FROM_ITER_" + sourceIterationId);
-                    configsToSave.add(config);
-
-                    log.info(String.format(
-                            "✅ Itération sauvegardée : [%s.%s] rule=%s | origin=%s | ruleId=%d",
-                            tableName, columnName, rule, ruleOrigin, ruleId
-                    ));
-                }
-            }
-
-            if (!configsToSave.isEmpty()) {
-                iterationConfigRepository.saveAll(configsToSave);
-            }
-
-            long sameCount = configsToSave.stream()
-                    .filter(c -> "SAME".equals(c.getRuleOrigin())).count();
-            long diffCount = configsToSave.stream()
-                    .filter(c -> "DIFF".equals(c.getRuleOrigin())).count();
-
-            response.put("success", true);
-            response.put("correctionCount", configsToSave.size());
-            response.put("targetIterationId", targetIterationId);
-            response.put("sameRules", sameCount);
-            response.put("diffRules", diffCount);
-            response.put("message", String.format(
-                    "%d élément(s) configurés (SAME=%d, DIFF=%d)",
-                    configsToSave.size(), sameCount, diffCount));
-
-            return ResponseEntity.ok(response);
-
-        } catch (Exception e) {
+        if (targetIterationId == null) {
             response.put("success", false);
-            response.put("error", "Erreur: " + e.getMessage());
-            return ResponseEntity.internalServerError().body(response);
+            response.put("error", "targetIterationId est requis");
+            return ResponseEntity.badRequest().body(response);
         }
+
+        iterationConfigRepository.deleteByIterationId(targetIterationId);
+
+        Map<String, Integer> lastOffsetByTable = iterationConfigRepository
+                .findOffsetByLatestIteration()
+                .stream()
+                .collect(Collectors.toMap(
+                        row -> ((String) row[0]).toLowerCase().trim(),
+                        row -> ((Number) row[1]).intValue(),
+                        (existing, replacement) -> existing
+                ));
+
+        LocalDateTime now = LocalDateTime.now();
+        List<BscsIterationConfig> configsToSave = new ArrayList<>();
+
+        for (Map<String, Object> item : itemsToCorrect) {
+            String tableName = item.get("tableName") != null
+                    ? ((String) item.get("tableName")).trim().toLowerCase() : null;
+            String columnName = (String) item.get("columnName");
+            String rule       = (String) item.get("rule");
+
+            String ruleOrigin = (String) item.get("ruleOrigin");
+            if (ruleOrigin == null || ruleOrigin.trim().isEmpty()) {
+                ruleOrigin = "UNKNOWN";
+            } else {
+                ruleOrigin = ruleOrigin.toUpperCase();
+                if (!ruleOrigin.equals("SAME") && !ruleOrigin.equals("DIFF")) {
+                    ruleOrigin = "UNKNOWN";
+                }
+            }
+
+            Integer ruleId = null;
+            if (item.get("ruleId") != null) {
+                try {
+                    ruleId = ((Number) item.get("ruleId")).intValue();
+                } catch (Exception e) {
+                    log.warning("ruleId invalide pour " + tableName + "." + columnName);
+                }
+            }
+
+            Integer batchSize = item.get("batchSize") != null
+                    ? ((Number) item.get("batchSize")).intValue() : 0;
+
+            Integer inheritedOffset = lastOffsetByTable.getOrDefault(tableName, 0);
+
+            boolean exists = iterationConfigRepository
+                    .existsByIterationIdAndTableNameAndColumnNameAndRule(
+                            targetIterationId, tableName, columnName, rule);
+
+            if (!exists) {
+                BscsIterationConfig config = new BscsIterationConfig();
+                config.setIterationId(targetIterationId);
+                config.setTableName(tableName);
+                config.setColumnName(columnName);
+                config.setRule(rule);
+                config.setRuleOrigin(ruleOrigin);
+                config.setRuleId(ruleId);
+                config.setFlagToCheck(true);
+                config.setSelectedBy(selectedBy != null ? selectedBy : "agent");
+                config.setSelectedAt(now);
+                config.setBatchSize(batchSize);
+                config.setOffsetCurrent(inheritedOffset); 
+                config.setRunId("PLAN_FROM_ITER_0");
+                configsToSave.add(config);
+
+                log.info(String.format(
+                        " [%s.%s] rule=%s | origin=%s | ruleId=%d | offset_hérité=%d",
+                        tableName, columnName, rule, ruleOrigin, ruleId, inheritedOffset
+                ));
+            }
+        }
+
+        if (!configsToSave.isEmpty()) {
+            iterationConfigRepository.saveAll(configsToSave);
+        }
+
+        long sameCount = configsToSave.stream()
+                .filter(c -> "SAME".equals(c.getRuleOrigin())).count();
+        long diffCount = configsToSave.stream()
+                .filter(c -> "DIFF".equals(c.getRuleOrigin())).count();
+
+        response.put("success", true);
+        response.put("correctionCount", configsToSave.size());
+        response.put("targetIterationId", targetIterationId);
+        response.put("sameRules", sameCount);
+        response.put("diffRules", diffCount);
+        response.put("message", String.format(
+                "%d élément(s) configurés (SAME=%d, DIFF=%d)",
+                configsToSave.size(), sameCount, diffCount));
+
+        return ResponseEntity.ok(response);
+
+    } catch (Exception e) {
+        response.put("success", false);
+        response.put("error", "Erreur: " + e.getMessage());
+        return ResponseEntity.internalServerError().body(response);
     }
+}
     @PostMapping("/trigger-airflow")
     public ResponseEntity<Map<String, Object>> triggerAirflow(
             @RequestBody Map<String, Object> requestBody) {
@@ -468,7 +504,6 @@ public class IterationConfigController {
         }
     }
 
-    // ─── Auth helpers ──────────────────────────────────────────
 
     private HttpHeaders buildAuthHeaders(RestTemplate restTemplate, String apiVersion) {
         HttpHeaders headers = new HttpHeaders();
@@ -517,8 +552,6 @@ public class IterationConfigController {
         }
         return "/api/v1";
     }
-
-    // ─── Helper : mapping ResultSet → Map règle ───────────────
 
     private Map<String, Object> mapRuleRow(ResultSet rs, String ruleType) throws SQLException {
         String column1         = rs.getString("column_1");

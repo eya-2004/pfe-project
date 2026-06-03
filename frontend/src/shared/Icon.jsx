@@ -25,13 +25,6 @@ const icons = {
     </svg>
   ),
   
-  'clock': (
-    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <circle cx="12" cy="12" r="10"></circle>
-      <polyline points="12 6 12 12 16 14"></polyline>
-    </svg>
-  ),
-  
   'trend': (
     <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <line x1="18" y1="20" x2="18" y2="10"></line>
@@ -45,14 +38,6 @@ const icons = {
       <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
       <line x1="12" y1="9" x2="12" y2="13"></line>
       <line x1="12" y1="17" x2="12.01" y2="17"></line>
-    </svg>
-  ),
-  
-  'chart': (
-    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <line x1="18" y1="20" x2="18" y2="10"></line>
-      <line x1="12" y1="20" x2="12" y2="4"></line>
-      <line x1="6" y1="20" x2="6" y2="14"></line>
     </svg>
   ),
   
@@ -77,14 +62,40 @@ const icons = {
     </svg>
   ),
 
-  // ═══════════════════════════════════════════════════
-  //   NOUVELLES ICÔNES POUR SIDEBAR
-  // ═══════════════════════════════════════════════════
-
   // ─── LOGO DATAQUALITY ──────────────────────
   'logo': (
     <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <path d="M3 13h2v8H3v-8zm4-6h2v14H7V7zm4-4h2v18h-2V3zm4 9h2v9h-2v-9zm4-5h2v14h-2V7z"/>
+    </svg>
+  ),
+
+  // ─── CHART / GRAPHIQUES ──────────────────
+  'chart': (
+    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <line x1="18" y1="20" x2="18" y2="10"/>
+      <line x1="12" y1="20" x2="12" y2="4"/>
+      <line x1="6" y1="20" x2="6" y2="14"/>
+      <circle cx="18" cy="10" r="2" fill="currentColor" opacity="0.2"/>
+      <circle cx="12" cy="4" r="2" fill="currentColor" opacity="0.2"/>
+      <circle cx="6" cy="14" r="2" fill="currentColor" opacity="0.2"/>
+    </svg>
+  ),
+
+  // ─── HISTORY / ITÉRATION ─────────────────
+  'history': (
+    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="10"/>
+      <polyline points="12 6 12 12 16 14"/>
+      <path d="M12 2a10 10 0 0 1 10 10" strokeDasharray="3 2" opacity="0.35"/>
+    </svg>
+  ),
+
+  // ─── CLOCK / DATE HEURE ──────────────────
+  'clock': (
+    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="10"/>
+      <polyline points="12 6 12 12 16 14"/>
+      <circle cx="12" cy="12" r="2" fill="currentColor" opacity="0.15"/>
     </svg>
   ),
 
@@ -95,15 +106,6 @@ const icons = {
       <circle cx="9" cy="7" r="4"/>
       <path d="M23 21v-2a4 4 0 0 0-3-3.87"/>
       <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
-    </svg>
-  ),
-
-  // ─── HISTORY / HISTORIQUE ─────────────────
-  'history': (
-    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <circle cx="12" cy="12" r="10"/>
-      <polyline points="12 6 12 12 16 14"/>
-      <path d="M12 2a10 10 0 0 1 10 10" opacity="0.3" strokeDasharray="3 2"/>
     </svg>
   ),
 
@@ -140,28 +142,6 @@ const icons = {
       <line x1="21" y1="12" x2="9" y2="12"/>
     </svg>
   ),
-  // ══════════════════════════════════════════════════════════
-//   ICÔNES DASHBOARD - DESIGN MODERNE
-// ══════════════════════════════════════════════════════════
-
-  // ─── LOGO DATAQUALITY ──────────────────────
-  'logo': (
-    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M3 13h2v8H3v-8zm4-6h2v14H7V7zm4-4h2v18h-2V3zm4 9h2v9h-2v-9zm4-5h2v14h-2V7z"/>
-    </svg>
-  ),
-
-  // ─── CHART / GRAPHIQUES ──────────────────
-  'chart': (
-    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <line x1="18" y1="20" x2="18" y2="10"/>
-      <line x1="12" y1="20" x2="12" y2="4"/>
-      <line x1="6" y1="20" x2="6" y2="14"/>
-      <circle cx="18" cy="10" r="2" fill="currentColor" opacity="0.2"/>
-      <circle cx="12" cy="4" r="2" fill="currentColor" opacity="0.2"/>
-      <circle cx="6" cy="14" r="2" fill="currentColor" opacity="0.2"/>
-    </svg>
-  ),
 
   // ─── TAG / CATÉGORIE ─────────────────────
   'tag': (
@@ -192,21 +172,87 @@ const icons = {
     </svg>
   ),
 
-  // ─── HISTORY / ITÉRATION ─────────────────
-  'history': (
+  // ─── REFRESH ─────────────────────────────
+  'refresh': (
     <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <circle cx="12" cy="12" r="10"/>
-      <polyline points="12 6 12 12 16 14"/>
-      <path d="M12 2a10 10 0 0 1 10 10" strokeDasharray="3 2" opacity="0.35"/>
+      <polyline points="23 4 23 10 17 10"/>
+      <polyline points="1 20 1 14 7 14"/>
+      <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
     </svg>
   ),
 
-  // ─── CLOCK / DATE HEURE ──────────────────
-  'clock': (
+  // ─── ID BADGE ────────────────────────────
+  'id': (
     <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <circle cx="12" cy="12" r="10"/>
-      <polyline points="12 6 12 12 16 14"/>
-      <circle cx="12" cy="12" r="2" fill="currentColor" opacity="0.15"/>
+      <rect x="2" y="3" width="20" height="18" rx="2" ry="2"/>
+      <line x1="8" y1="10" x2="16" y2="10"/>
+      <line x1="8" y1="14" x2="16" y2="14"/>
+      <line x1="8" y1="18" x2="12" y2="18"/>
+    </svg>
+  ),
+
+  // ─── SEARCH ──────────────────────────────
+  'search': (
+    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="11" cy="11" r="8"/>
+      <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+    </svg>
+  ),
+
+  // ─── SAVE ────────────────────────────────
+  'save': (
+    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>
+      <polyline points="17 21 17 13 7 13 7 21"/>
+      <polyline points="7 3 7 8 15 8"/>
+    </svg>
+  ),
+
+  // ─── ROCKET ──────────────────────────────
+  'rocket': (
+    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09z"/>
+      <path d="m12 15-3-3a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 0 1-4 2z"/>
+      <path d="M9 12H4s.55-3.03 2-4c1.62-1.08 5 0 5 0"/>
+      <path d="M12 15v5s3.03-.55 4-2c1.08-1.62 0-5 0-5"/>
+    </svg>
+  ),
+
+  // ─── TRASH ───────────────────────────────
+  'trash': (
+    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <polyline points="3 6 5 6 21 6"/>
+      <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
+      <path d="M10 11v6"/>
+      <path d="M14 11v6"/>
+      <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
+    </svg>
+  ),
+
+  // ─── MAGIC / AUTO ────────────────────────
+  'magic': (
+    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="m15 5 4 4"/>
+      <path d="M13 7 8.7 2.7a2.41 2.41 0 0 0-3.4 0L2.7 5.3a2.41 2.41 0 0 0 0 3.4L7 13"/>
+      <path d="m8 6 2-2"/>
+      <path d="m2 22 5.5-5.5"/>
+      <path d="M17 7l5 5-9.5 9.5-5-5Z"/>
+    </svg>
+  ),
+
+  // ─── COLUMNS ─────────────────────────────
+  'columns': (
+    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+      <line x1="12" y1="3" x2="12" y2="21"/>
+    </svg>
+  ),
+
+  // ─── USER ────────────────────────────────
+  'user': (
+    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+      <circle cx="12" cy="7" r="4"/>
     </svg>
   ),
 };

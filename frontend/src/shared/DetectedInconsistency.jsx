@@ -1,4 +1,3 @@
-// DetectedInconsistency.jsx - Version corrigée
 import React, { useState } from 'react';
 import { useInconsistencyData } from './useInconsistencyData';
 import DashboardHeader from './DashboardHeader';
@@ -24,13 +23,12 @@ export default function DetectedInconsistency({ role }) {
         selectedRunId, setSelectedRunId,
         correctionMode, setCorrectionMode,
         hasCorrectionData,
-        summary
+        summary,
+        noDataAtAll,        
+        noDataForIteration 
     } = useInconsistencyData();
-
-    // Filtrer les données par table sélectionnée
-    const filteredTableData = tableData.filter(item => 
-        item.tableName === selectedTable
-    ).map(item => {
+    /* remplace nbViolations par nbViolationsAfter  si mose correction after */
+    const filteredTableData = tableData.map(item => {
         if (correctionMode === 'after' && hasCorrectionData) {
             return {
                 ...item,
@@ -43,20 +41,11 @@ export default function DetectedInconsistency({ role }) {
         return item;
     });
 
-    console.log("=== DETECTED INCONSISTENCY DEBUG ===");
-    console.log("Itérations disponibles:", iterationsList);
-    console.log("Itération sélectionnée:", selectedIterationId);
-    console.log("Table sélectionnée:", selectedTable);
-    console.log("Nombre de données:", filteredTableData.length);
-
-    // Obtenir les statistiques pour la table sélectionnée
-    // DetectedInconsistency.jsx
     const tableStats = {
         countSource:      filteredTableData[0]?.countSource      || 0,
         nbToCorrect:      filteredTableData[0]?.nbToCorrect      || 0,
         nbToMigrate:      filteredTableData[0]?.nbToMigrate      || 0,
         tauxRejet:        filteredTableData[0]?.tauxRejet        || 0,
-        // ✅ Ajouter les trois clés manquantes
         nbToCorrectAfter: filteredTableData[0]?.nbToCorrectAfter ?? null,
         nbToMigrateAfter: filteredTableData[0]?.nbToMigrateAfter ?? null,
         tauxRejetAfter:   filteredTableData[0]?.tauxRejetAfter   ?? null,
@@ -79,7 +68,7 @@ export default function DetectedInconsistency({ role }) {
                 onRunChange={setSelectedRunId}
                 summary={summary}
                 correctionMode={correctionMode}
-                onCorrectionModeChange={setCorrectionMode}  
+                onCorrectionModeChange={setCorrectionMode}
                 hasCorrectionData={hasCorrectionData}
                 role={role}
             />
@@ -106,7 +95,32 @@ export default function DetectedInconsistency({ role }) {
                 </div>
             )}
 
-            {!loading && !error && (
+            {!loading && !error && noDataAtAll && (
+                <div className="empty-state">
+                    <span className="empty-icon">
+                        <Icon name="inbox" size={22} />
+                    </span>
+                    <h3>Aucune donnée disponible</h3>
+                    <p>Aucune itération trouvée dans le système.</p>
+                </div>
+            )}
+
+            {!loading && !error && !noDataAtAll && noDataForIteration && (
+                <div className="empty-state">
+                    <span className="empty-icon">
+                        <Icon name="inbox" size={22} />
+                    </span>
+                    <h3>Aucune donnée pour l'itération sélectionnée</h3>
+                    <p>
+                        {selectedTable
+                            ? `Aucune donnée trouvée pour l'itération ${selectedIterationId} et la table ${selectedTable}.`
+                            : `L'itération ${selectedIterationId} ne contient aucune donnée.`
+                        }
+                    </p>
+                </div>
+            )}
+
+            {!loading && !error && !noDataAtAll && !noDataForIteration && (
                 <>
                     <KpiGrid
                         stats={tableStats}
@@ -115,29 +129,26 @@ export default function DetectedInconsistency({ role }) {
                         correctionMode={correctionMode}
                         hasCorrectionData={hasCorrectionData}
                     />
-                    
-                    {viewMode === 'charts' && <ChartsView tableData={filteredTableData} correctionMode={correctionMode}hasCorrectionData={hasCorrectionData} />}
-                    {viewMode === 'categories' && <CategoryBarChart tableData={filteredTableData} />}
-                    {viewMode === 'table' && <TableView tableData={filteredTableData}
-                                                        selectedTable={selectedTable}
-                                                        correctionMode={correctionMode}
-                                                        hasCorrectionData={hasCorrectionData}
-                                                    />}
-                </>
-            )}
 
-            {!loading && !error && filteredTableData.length === 0 && selectedTable && (
-                <div className="empty-state">
-                    <span className="empty-icon">
-                        <Icon name="inbox" size={22} />
-                    </span>
-                    <h3>Aucune donnée disponible</h3>
-                    <p>
-                        {selectedIterationId 
-                            ? `Aucune donnée trouvée pour l'itération ${selectedIterationId} et la table ${selectedTable}`
-                            : "Sélectionnez une itération pour voir les résultats"}
-                    </p>
-                </div>
+                    {viewMode === 'charts' && (
+                        <ChartsView
+                            tableData={filteredTableData}
+                            correctionMode={correctionMode}
+                            hasCorrectionData={hasCorrectionData}
+                        />
+                    )}
+                    {viewMode === 'categories' && (
+                        <CategoryBarChart tableData={filteredTableData} />
+                    )}
+                    {viewMode === 'table' && (
+                        <TableView
+                            tableData={filteredTableData}
+                            selectedTable={selectedTable}
+                            correctionMode={correctionMode}
+                            hasCorrectionData={hasCorrectionData}
+                        />
+                    )}
+                </>
             )}
         </div>
     );

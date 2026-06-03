@@ -1,28 +1,29 @@
 package com.example.demo;
 
-
 public class AgentIterationSummary {
     private Long id;
     private String firstname;
     private String lastname;
     private String email;
-    private Integer totalIterations;      // Nombre total d'itérations
-    private String lastIterationDate;     // Date de la dernière itération
+    private Integer totalDetectionIterations;
+    private Integer totalCorrectionIterations;
+    private String lastIterationDate;
 
-    // Constructeurs
     public AgentIterationSummary() {}
 
     public AgentIterationSummary(Long id, String firstname, String lastname, String email,
-                                 Integer totalIterations, String lastIterationDate) {
-        this.id = id;
-        this.firstname = firstname;
-        this.lastname = lastname;
-        this.email = email;
-        this.totalIterations = totalIterations;
-        this.lastIterationDate = lastIterationDate;
-    }
+                             Integer totalDetectionIterations,
+                             Integer totalCorrectionIterations, 
+                             String lastIterationDate) {
+    this.id = id;
+    this.firstname = firstname;
+    this.lastname = lastname;
+    this.email = email;
+    this.totalDetectionIterations = totalDetectionIterations;
+    this.totalCorrectionIterations = totalCorrectionIterations;  
+    this.lastIterationDate = lastIterationDate;
+}
 
-    // Getters et Setters
     public Long getId() { return id; }
     public void setId(Long id) { this.id = id; }
 
@@ -35,8 +36,11 @@ public class AgentIterationSummary {
     public String getEmail() { return email; }
     public void setEmail(String email) { this.email = email; }
 
-    public Integer getTotalIterations() { return totalIterations; }
-    public void setTotalIterations(Integer totalIterations) { this.totalIterations = totalIterations; }
+    public Integer getTotalDetectionIterations() { return totalDetectionIterations; }
+    public void setTotalDetectionIterations(Integer v) { this.totalDetectionIterations = v; }
+
+    public Integer getTotalCorrectionIterations() { return totalCorrectionIterations; }
+    public void setTotalCorrectionIterations(Integer v) { this.totalCorrectionIterations = v; }
 
     public String getLastIterationDate() { return lastIterationDate; }
     public void setLastIterationDate(String lastIterationDate) { this.lastIterationDate = lastIterationDate; }

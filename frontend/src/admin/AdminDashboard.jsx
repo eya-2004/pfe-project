@@ -1,4 +1,3 @@
-// src/admin/AdminDashboard.jsx
 import React, { useState } from "react";
 import { Routes, Route, Navigate } from "react-router-dom";
 import SideBar from "../shared/SideBar";

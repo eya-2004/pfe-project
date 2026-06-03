@@ -21,17 +21,7 @@ public class CorrectionConfigController {
         Integer nextId = correctionConfigService.getNextIterationId();
         return ResponseEntity.ok(nextId);
     }
-    @GetMapping("/iterations")  // ✅ NOUVEAU : Historique des itérations
-    public ResponseEntity<List<Map<String, Object>>> getAllIterations() {
-        List<Map<String, Object>> iterations = correctionConfigService.getAllIterations();
-        return ResponseEntity.ok(iterations);
-    }
-    @GetMapping("/tables")
-    public ResponseEntity<List<TableGroupDTO>> getAllTablesWithRules() {
-        // ✅ CORRIGÉ: Utilisez le BON nom de méthode du Service
-        List<TableGroupDTO> tables = correctionConfigService.getAllTablesWithRealRowCount();
-        return ResponseEntity.ok(tables);
-    }
+    
 
     @PostMapping("/save")
     public ResponseEntity<Map<String, Object>> saveCorrectionConfig(
@@ -58,28 +48,39 @@ public class CorrectionConfigController {
     """;
         return ResponseEntity.ok(jdbcTemplate.queryForList(sql,runId));
     }
-    @GetMapping("/iteration/{dagRunId}")
-    public ResponseEntity<?> getIterationByDagRunId(@PathVariable String dagRunId) {
-        return ResponseEntity.ok().build();
-    }
+    
     @GetMapping("/transformation-rules")
-    public ResponseEntity<List<Map<String, Object>>> getTransformationRules(
+    public ResponseEntity<List<BssMigrationRule>> getTransformationRules(
             @RequestParam String tableName,
             @RequestParam String columnName) {
-        String sql = """
-        SELECT rule_id as ruleId, rule_type as ruleType,
-               rule_label as ruleLabel, default_value as defaultValue
-        FROM bss_migration_rules
-        WHERE LOWER(source_table)  = LOWER(?)
-          AND LOWER(source_column) = LOWER(?)
-        ORDER BY rule_id
-    """;
-        return ResponseEntity.ok(jdbcTemplate.queryForList(sql, tableName, columnName));
+        return ResponseEntity.ok(
+            correctionConfigService.getTransformationRules(tableName, columnName)
+        );
     }
     @GetMapping("/available-runs")
     public ResponseEntity<List<Map<String, Object>>> getAvailableDetectionRuns() {
         List<Map<String, Object>> runs = correctionConfigService.getAvailableDetectionRuns();
         return ResponseEntity.ok(runs);
+    }
+    
+    @PostMapping("/launch-etl")
+    public ResponseEntity<Map<String, Object>> launchEtlWithDetectionRunId(
+            @RequestBody Map<String, Object> body) {
+        try {
+            Integer iterationId    = (Integer) body.get("iterationId");
+            String  detectionRunId = (String)  body.get("detectionRunId");
+            String  triggeredBy    = (String)  body.getOrDefault("triggeredBy", "unknown");
+
+            Map<String, Object> result = correctionConfigService
+                    .launchEtlDagWithDetectionRunId(iterationId, detectionRunId, triggeredBy);
+            return ResponseEntity.ok(result);
+
+        } catch (Exception e) {
+            Map<String, Object> error = new HashMap<>();
+            error.put("success", false);
+            error.put("message", e.getMessage());
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(error);
+        }
     }
 
 }

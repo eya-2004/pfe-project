@@ -14,6 +14,7 @@ from airflow.providers.mysql.hooks.mysql import MySqlHook
 from airflow.utils.task_group import TaskGroup
 from airflow.operators.trigger_dagrun import TriggerDagRunOperator
 
+
 logger = logging.getLogger(__name__)
 
 SOURCE_TO_TARGET: dict[str, str] = {
@@ -30,6 +31,8 @@ SOURCE_TO_TARGET: dict[str, str] = {
     "bscs_resource_port":          "corrected_resource_port",
     "bscs_resource_sim":           "corrected_resource_sim",
     "bscs_services":               "corrected_services",
+    "bscs_customer_tax_exempt": "corrected_customer_tax_exempt",
+    
 }
 
 DEFAULT_ARGS = {
@@ -48,17 +51,12 @@ def _staging_hook() -> MySqlHook:
 
 
 class CompleteSqlRuleEngine:
-    """
-    Moteur de règles SQL complet.
-    Chaque méthode _handle_xxx retourne (sql_string, params_dict) ou None si non applicable.
-    """
-
     def __init__(self):
         self.stats = {"rules_applied": 0, "rows_modified": 0, "errors": [], "warnings": []}
 
     def apply_rule(self, hook: MySqlHook, table: str, rule: dict,
-                   pk_col: str = None, batch_pks: list = None) -> dict:
-        """Point d'entrée principal."""
+                 pk_col: str = None, batch_pks: list = None,
+                 source_hook: MySqlHook = None) -> dict:
         rule_id   = rule.get("rule_id", "?")
         rule_type = rule.get("rule_type", "UNKNOWN")
         col       = rule.get("column_name", "")
@@ -75,50 +73,54 @@ class CompleteSqlRuleEngine:
         }
 
         try:
-            handler_name = f"_handle_{rule_type.lower().replace('-', '_')}"
-            handler = getattr(self, handler_name, None)
-
-            if handler is None:
-                sql, params = self._handle_generic(table, target_col, rule_type, value, rule)
+            if value and value.upper().startswith("COPY_FROM:"):
+                sql, params = self._handle_copy_from(table, target_col, value, rule)
             else:
-                sql, params = handler(table, target_col, value, rule)
-
+                handler_name = f"_handle_{rule_type.lower().replace('-', '_')}"
+                handler = getattr(self, handler_name, None)
+                if handler is None:
+                    sql, params = self._handle_generic(table, target_col, rule_type, value, rule)
+                else:
+                    sql, params = handler(table, target_col, value, rule)
+            #Vérification que le SQL a bien été généré
             if not sql:
                 result["status"] = "NO_TEMPLATE"
                 logger.warning(
                     "[%s] Rule %s (%s): pas de template", table, rule_id, rule_type
                 )
                 return result
-
-            # ✅ Ajouter filtre PKs sur les UPDATE uniquement
+            #détection du type requete select ou update (fonctions qui traite avec update et select REF_CHECK)
             is_select = sql.strip().upper().startswith("SELECT")
             if not is_select and pk_col and batch_pks:
                 ph_pks = ",".join(["%s"] * len(batch_pks))
                 pk_params_list = [str(p) for p in batch_pks]
                 sql_upper = sql.strip().upper()
+                # si le SQL généré par le handler contient déjà un WHERE
                 if " WHERE " in sql_upper:
                     sql = sql.rstrip() + f" AND `{pk_col}` IN ({ph_pks})"
                 else:
                     sql = sql.rstrip() + f" WHERE `{pk_col}` IN ({ph_pks})"
+                #Fusionne les paramètres existants avec les PKs.
                 if isinstance(params, dict):
                     params = pk_params_list
                 elif isinstance(params, (list, tuple)):
                     params = list(params) + pk_params_list
                 else:
                     params = pk_params_list
-
+                #resultat du sql généré
             result["sql"] = sql[:200] + "..." if len(sql) > 200 else sql
-
-            conn   = hook.get_conn()
+            exec_hook = (source_hook if source_hook and rule_type == "REF_CHECK" and is_select 
+                        else hook)
+            conn   = exec_hook.get_conn()
             cursor = conn.cursor()
-
+            #Les paramètres sont passés  pour les UPDATE
             if params and not is_select:
                 cursor.execute(sql, params)
             elif not is_select:
                 cursor.execute(sql)
             else:
                 cursor.execute(sql)
-
+            #Récupère le nombre de lignes affectées
             affected = cursor.rowcount if not is_select else 0
             conn.commit()
             cursor.close()
@@ -146,7 +148,7 @@ class CompleteSqlRuleEngine:
                 {"rule_id": rule_id, "table": table, "error": str(e)}
             )
             logger.error(
-                "[%s] ❌ Rule %s [%s] ERROR: %s", table, rule_id, rule_type, e
+                "[%s]  Rule %s [%s] ERROR: %s", table, rule_id, rule_type, e
             )
 
         return result
@@ -157,22 +159,67 @@ class CompleteSqlRuleEngine:
         ref_table, ref_col = v.split(":", 1)
         ref_table = ref_table.strip()
         ref_col   = ref_col.strip()
+
+        try:
+            src_c = MySqlHook(mysql_conn_id="mysql_conn").get_connection("mysql_conn")
+            src_db = src_c.schema
+        except Exception:
+            src_db = "app"
+        #Évite les problèmes de types entre VARCHAR et INT
         return f"""SELECT COUNT(*) as ref_errors FROM `{t}`
                 WHERE `{c}` IS NOT NULL AND TRIM(`{c}`) != ''
                 AND CAST(`{c}` AS CHAR) NOT IN (
                     SELECT CAST(`{ref_col}` AS CHAR)
-                    FROM `{ref_table}`
+                    FROM `{src_db}`.`{ref_table}`
                     WHERE `{ref_col}` IS NOT NULL
                 )""", {}
-
+    def _is_float(self, value: str) -> bool:
+        try:
+            float(value)
+            return True
+        except (ValueError, TypeError):
+            return False
     def _handle_default_if_invalid_ref(self, t, c, v, r):
         default = "NULL" if (v or "").upper() == "NULL" else self._escape(v or "UNKNOWN")
-        # On applique le défaut si NULL ou vide — la vérification référentielle
-    
+        rule_id = r.get("rule_id")
+
+     
+        try:
+            src_c = MySqlHook(mysql_conn_id="mysql_conn").get_connection("mysql_conn")
+            src_db = src_c.schema  # "app"
+        except Exception:
+            src_db = "app"  
+        
+        #La correction est ciblée : seules les valeurs rule_value qui n'existent pas dans le référentiel sont remplacées
+        RULE_REF_MAP = {
+            363:  ("map_country",  "nom_en"),
+            374:  ("map_country",  "code_iso3"),
+            375:  ("map_currency", "code_iso"),
+            379:  ("map_country",  "nom_en"),
+            380:  ("map_currency", "id"),
+            404:  ("map_currency", "code_iso"),
+            411:  ("map_currency", "code_iso"),
+            412:  ("map_country",  "nom_en"),
+            434:  ("map_currency", "code_iso"),
+            440:  ("map_country",  "nom_en"),
+            516:  ("map_currency", "code_iso"),
+        }
+
+        ref_info = RULE_REF_MAP.get(rule_id)
+        if ref_info:
+            ref_table, ref_col = ref_info
+            return f"""UPDATE `{t}` SET `{c}` = {default}
+                    WHERE `{c}` IS NOT NULL
+                    AND TRIM(`{c}`) != ''
+                    AND CAST(`{c}` AS CHAR) NOT IN (
+                        SELECT CAST(`{ref_col}` AS CHAR)
+                        FROM `{src_db}`.`{ref_table}`
+                        WHERE `{ref_col}` IS NOT NULL
+                    )""", {}
+
         return f"""UPDATE `{t}` SET `{c}` = {default}
                 WHERE (`{c}` IS NULL OR TRIM(`{c}`) = '')""", {}
-
-
+    #Une date de fin de charge ne peut pas être postérieure à la date de fin du service
     def _handle_cross_table_date_max(self, t, c, v, r):
         if not v or ":" not in v:
             return None, {}
@@ -181,7 +228,7 @@ class CompleteSqlRuleEngine:
         ref_col       = ref_col.strip()
         ref_table     = SOURCE_TO_TARGET.get(ref_table_raw.lower(), ref_table_raw)
 
-        # Déduire la clé de jointure selon la table cible
+        # Déduire la clé de jointure des deux table findocs id exmple
         join_key = self._infer_join_key(t, ref_table)
         if not join_key:
             return None, {}
@@ -197,7 +244,7 @@ class CompleteSqlRuleEngine:
     def _handle_cross_table_date_min(self, t, c, v, r):
         if not v or ":" not in v:
             return None, {}
-        ref_table_raw, ref_col = v.split(":", 1)
+        ref_table_raw, ref_col ,= v.split(":", 1)
         ref_table_raw = ref_table_raw.strip()
         ref_col       = ref_col.strip()
         ref_table     = SOURCE_TO_TARGET.get(ref_table_raw.lower(), ref_table_raw)
@@ -289,8 +336,8 @@ class CompleteSqlRuleEngine:
 
 
     def _handle_default_if_null_when_other_notnull(self, t, c, v, r):
-        if not v or ":" not in v:
-            return None, {}
+        if v and v.upper().startswith("COPY_FROM:"):
+            return self._handle_copy_from(t, c, v, r)
         other_col, default = v.split(":", 1)
         other_col = other_col.strip()
         default   = self._escape(default.strip())
@@ -307,21 +354,50 @@ class CompleteSqlRuleEngine:
         ref_col     = parts[0].strip()
         trigger_val = parts[1].strip()
         target_val  = parts[2].strip()
-        return f"""UPDATE `{t}` SET `{c}` = {self._escape(target_val)}
+
+        # Si la valeur cible est numérique
+        if target_val.lstrip("-").isdigit() or self._is_float(target_val):
+            escaped_target = target_val
+        else:
+            escaped_target = self._escape(target_val)
+
+        return f"""UPDATE `{t}` SET `{c}` = {escaped_target}
                 WHERE `{ref_col}` = {self._escape(trigger_val)}
                 AND `{ref_col}` IS NOT NULL""", {}
-
+    def _handle_correlate_min_value(self, t, c, v, r):
+        if not v or v.count(":") < 2:
+            return None, {}
+        parts       = v.split(":", 2)
+        ref_col     = parts[0].strip()
+        trigger_val = parts[1].strip()
+        min_val     = parts[2].strip()
+        return f"""UPDATE `{t}` SET `{c}` = {self._escape(min_val)}
+                WHERE `{ref_col}` = {self._escape(trigger_val)}
+                AND (`{c}` IS NULL OR CAST(`{c}` AS DECIMAL(10,2)) < {min_val})
+                AND `{ref_col}` IS NOT NULL""", {}
 
     def _handle_compute_field(self, t, c, v, r):
         if not v:
             return None, {}
-       
+        # Cas spécifique INITAMOUNT*EXCHANGERATEVALUE
+        if "INITAMOUNT" in v and "EXCHANGERATEVALUE" in v:
+            return f"""UPDATE `{t}` SET `{c}` = ROUND(`INITAMOUNT` * `EXCHANGERATEVALUE`, 2)
+                    WHERE `INITAMOUNT` IS NOT NULL 
+                    AND `EXCHANGERATEVALUE` IS NOT NULL
+                    AND (
+                        `{c}` IS NULL 
+                        OR ABS(`{c}` - (`INITAMOUNT` * `EXCHANGERATEVALUE`)) > 0.01
+                    )""", {}
+        
         import re as _re
-        expr = _re.sub(r'\b([A-Z_][A-Z0-9_]*)\b', lambda m: f"`{m.group(1)}`", v)
+        expr = _re.sub(
+            r'\b([A-Z][A-Z0-9_]*)\b',
+            lambda m: f"`{m.group(1)}`" if not m.group(1).isdigit() else m.group(1),
+            v
+        )
         return f"""UPDATE `{t}` SET `{c}` = {expr}
                 WHERE `{c}` IS NULL
-                OR `{c}` != {expr}""", {}
-
+                OR ABS(COALESCE(`{c}`, 0) - COALESCE({expr}, 0)) > 0.01""", {}
     def _handle_aggregate_cap(self, t, c, v, r):
         if not v or ":" not in v:
             return None, {}
@@ -329,8 +405,6 @@ class CompleteSqlRuleEngine:
         ref_table_raw = ref_table_raw.strip()
         ref_col       = ref_col.strip()
         ref_table     = SOURCE_TO_TARGET.get(ref_table_raw.lower(), ref_table_raw)
-
-        # Clé de jointure supposée PAYMENT_ID pour payments_det → payments
         join_key = "PAYMENT_ID"
 
         return f"""UPDATE `{t}` det
@@ -349,9 +423,7 @@ class CompleteSqlRuleEngine:
                 WHERE ovr.max_allowed IS NOT NULL
                 AND ovr.total_paid > 0""", {}
 
-    def _handle_aggregate_check_warn(self, t, c, v, r):
-        # Réutilise la logique SELECT d'AGGREGATE_CHECK
-        return self._handle_aggregate_check(t, c, v, r)
+   
     def _handle_length_range_fix(self, t, c, v, r):
         if not v or ":" not in v:
             return None, {}
@@ -363,15 +435,12 @@ class CompleteSqlRuleEngine:
                     WHEN LENGTH(`{c}`) > {max_len}
                         THEN LEFT(`{c}`, {max_len})
                     WHEN LENGTH(`{c}`) < {min_len}
-                        THEN LPAD(`{c}`, {min_len}, '0')
+                        THEN RPAD(`{c}`, {min_len}, '0')
                     ELSE `{c}`
                 END
                 WHERE `{c}` IS NOT NULL
                 AND (LENGTH(`{c}`) > {max_len} OR LENGTH(`{c}`) < {min_len})""", {}
 
-    # Plafonner une date à la valeur d'une autre colonne de la même table
-    # Format : ref_column
-    # ════════════════════════════════════════════════════════════════════════════
     def _handle_date_max_field(self, t, c, v, r):
         ref_col = (v or "").strip()
         if not ref_col:
@@ -418,6 +487,14 @@ class CompleteSqlRuleEngine:
             ("corrected_memos",                  "corrected_customer"):          "CUSTOMER_ID",
             ("corrected_billing_account_assign", "corrected_billing_account"):   "BILLING_ACCOUNT_ID",
             ("corrected_billing_account_assign", "corrected_customer"):          "CUSTOMER_ID",
+            
+            ("corrected_charge",                 "corrected_billing_account"):  "BILLING_ACCOUNT_ID",
+            ("corrected_payments",               "corrected_findocs"):          "ID_FINDOC",
+            ("corrected_payments_det",           "corrected_charge"):           "CO_ID",
+            ("corrected_resource_directory",     "corrected_customer"):         "CUSTOMER_ID",
+            ("corrected_resource_port",          "corrected_customer"):         "CUSTOMER_ID",
+            ("corrected_customer_tax_exempt",    "corrected_customer"):         "CUSTOMER_ID",
+
         }
         key = (source_table.lower(), ref_table.lower())
         result = join_map.get(key)
@@ -426,7 +503,7 @@ class CompleteSqlRuleEngine:
             result  = join_map.get(key_inv)
         return result
 
-    # ← LIGNE VIDE ICI — on est toujours dans la classe mais _infer_join_key est FERMÉE
+
 
     def apply_special_rules(self, hook: MySqlHook, table: str) -> int:
         """Règles spéciales multi-requêtes."""
@@ -447,6 +524,13 @@ class CompleteSqlRuleEngine:
             total += self._cross_check_resource_sim(hook, table)
         if table == "corrected_resource_port":
             total += self._cross_check_resource_port(hook, table)
+        if table == "corrected_customer_tax_exempt":
+            total += self._cross_check_customer_tax_exempt(hook, table)
+        if table == "corrected_charge":
+            total += self._cross_check_charge(hook, table)
+        if table == "corrected_billing_account_assign":
+            total += self._cross_check_billing_account_assign(hook, table)
+        
         return total
 
     def _escape(self, value) -> str:
@@ -454,15 +538,17 @@ class CompleteSqlRuleEngine:
         if isinstance(value, (int, float)): return str(value)
         escaped = str(value).replace("'", "\\'").replace("\\", "\\\\")
         return "'" + escaped + "'"
-
+        #Si ruletype inconnu ou  ne correspond, abandonne proprement.
     def _handle_generic(self, t, c, rt, v, r):
         """Fallback intelligent."""
         rtl = rt.lower()
+
         if "null" in rtl and "when_other" in rtl: return self._handle_default_if_null_when_other_notnull(t,c,v,r)
         if "null" in rtl and "both" in rtl:       return self._handle_default_if_both_null(t,c,v,r)
         if "null_if_other" in rtl:                return self._handle_null_if_other_null(t,c,v,r)
         if "ref_check" in rtl:                    return self._handle_ref_check(t,c,v,r)
         if "invalid_ref" in rtl:                  return self._handle_default_if_invalid_ref(t,c,v,r)
+        if "correlate_min_value" in rtl:          return self._handle_correlate_min_value(t,c,v,r)
         if "cross_table_date_max" in rtl:         return self._handle_cross_table_date_max(t,c,v,r)
         if "cross_table_date_min" in rtl:         return self._handle_cross_table_date_min(t,c,v,r)
         if "cross_table_sync" in rtl:             return self._handle_cross_table_sync(t,c,v,r)
@@ -560,8 +646,11 @@ class CompleteSqlRuleEngine:
                 OR (`{c}` NOT REGEXP '^[+]?[0-9]{{7,15}}$' AND `{c}` != ''))""", {}
 
     def _handle_default_if_empty(self, t, c, v, r):
-        return f"UPDATE `{t}` SET `{c}` = {self._escape(v)} WHERE (`{c}` IS NULL OR TRIM(`{c}`) = '')", {}
-
+        if v and v.upper().startswith("COPY_FROM:"):
+            return self._handle_copy_from(t, c, v, r)
+        default = self._escape(v or "UNKNOWN")
+        return f"""UPDATE `{t}` SET `{c}` = {default}
+                WHERE (`{c}` IS NULL OR TRIM(`{c}`) = '')""", {}
     def _handle_default_if_invalid_length(self, t, c, v, r):
         default = self._escape(v or "UNKNOWN")
         return f"""UPDATE `{t}` SET `{c}` = {default}
@@ -749,13 +838,30 @@ class CompleteSqlRuleEngine:
                     FROM `{t}` t JOIN `{ref_target}` p ON t.`PAYMENT_ID` = p.`PAYMENT_ID`
                     GROUP BY t.`PAYMENT_ID`, p.`{ref_col.strip()}` HAVING total_paid > max_allowed""", {}
         if v.upper().startswith("MIN_COUNT:") and ">=" in v:
-            parts = v[10:].split(">=", 1)
-            tables_s = parts[0].strip(); min_cnt = int(parts[1].strip()) if parts[1].strip().isdigit() else 1
+            parts    = v[10:].split(">=", 1)
+            tables_s = parts[0].strip()
+            min_cnt  = int(parts[1].strip()) if parts[1].strip().isdigit() else 1
             sub_tables = [tb.strip().replace("bscs_", "corrected_") for tb in tables_s.split("+")]
-            unions = " UNION ALL ".join([f"SELECT `CONTRACT_ID` FROM `{tb}`" for tb in sub_tables])
-            return f"""SELECT COUNT(*) as contracts_without_resources FROM `{t}` s
-                    WHERE s.`STATUS` = 'A'
-                    AND (SELECT COUNT(*) FROM ({unions}) u WHERE u.`CONTRACT_ID` = s.`CONTRACT_ID`) < {min_cnt}""", {}
+
+            # Détecter la clé de groupement selon la table courante
+            if "billing_account" in t:
+                group_key = "BILLING_ACCOUNT_ID"
+                unions = " UNION ALL ".join(
+                    [f"SELECT `BILLING_ACCOUNT_ID` FROM `{tb}`" for tb in sub_tables]
+                )
+                return f"""SELECT COUNT(*) as ba_without_services FROM `{t}` ba
+                        WHERE (SELECT COUNT(*) FROM ({unions}) u 
+                            WHERE u.`BILLING_ACCOUNT_ID` = ba.`BILLING_ACCOUNT_ID`) < {min_cnt}""", {}
+            else:
+                # Cas bscs_services → ressources via CONTRACT_ID
+                group_key = "CONTRACT_ID"
+                unions = " UNION ALL ".join(
+                    [f"SELECT `CONTRACT_ID` FROM `{tb}`" for tb in sub_tables]
+                )
+                return f"""SELECT COUNT(*) as contracts_without_resources FROM `{t}` s
+                        WHERE s.`STATUS` = 'A'
+                        AND (SELECT COUNT(*) FROM ({unions}) u 
+                            WHERE u.`CONTRACT_ID` = s.`CONTRACT_ID`) < {min_cnt}""", {}
         if "SUM(" in v.upper() and "INITAMOUNT" in v.upper():
             return f"""SELECT f.`ID_FINDOC`, f.`INITAMOUNT`, f.`UNCLEAREDAMOUNT`,
                         COALESCE(SUM(pd.`AMOUNT_PAID`), 0) as total_paid,
@@ -774,21 +880,108 @@ class CompleteSqlRuleEngine:
                 AND `{src_col}` IS NOT NULL AND `{src_col}` != ''""", {}
 
     def _handle_default_if_invalid_domain(self, t, c, v, r):
-        label = r.get("detection_rule_label", "") or r.get("rule_label", "") or ""
-        domain_list = None
-        if " IN " in label.upper():
-            import re
-            m = re.search(r'\(([^)]+)\)', label)
-            if m:
-                domain_list = [x.strip().strip("'") for x in m.group(1).split(",")]
         default = self._escape(v or "UNKNOWN")
+        rule_id = r.get("rule_id")
+        domain_list = self._get_domain_from_catalog(rule_id, c)
         if domain_list:
             in_list = ",".join([f"'{x}'" for x in domain_list])
             return f"""UPDATE `{t}` SET `{c}` = {default}
-                    WHERE (`{c}` IS NULL OR TRIM(`{c}`) = '' OR `{c}` NOT IN ({in_list}))""", {}
+                    WHERE (`{c}` IS NULL 
+                        OR TRIM(`{c}`) = '' 
+                        OR `{c}` NOT IN ({in_list}))""", {}
+        rule_value = r.get("rule_value", "") or ""
+        if "," in rule_value and ":" not in rule_value:
+            vals = [x.strip() for x in rule_value.split(",")]
+            in_list = ",".join([f"'{x}'" for x in vals])
+            return f"""UPDATE `{t}` SET `{c}` = {default}
+                    WHERE (`{c}` IS NULL 
+                        OR TRIM(`{c}`) = '' 
+                        OR `{c}` NOT IN ({in_list}))""", {}
         return f"""UPDATE `{t}` SET `{c}` = {default}
                 WHERE (`{c}` IS NULL OR TRIM(`{c}`) = '')""", {}
+    # toute valeur hors domaine est remplacée
+    def _get_domain_from_catalog(self, rule_id, column): 
+        DOMAIN_MAP = {
+            # bscs_billing_account
+            219: "ACTIVE,SUSPENDED,CLOSED,PENDING",
+            220: "ACTIVE,SUSPENDED,CLOSED,PENDING",
+            222: "Y,N",
+            223: "O,N",
+            224: "EMAIL,POSTAL,SMS,PORTAL",
 
+            # bscs_customer
+            240: "MONTHLY,QUARTERLY,ANNUAL",
+            242: "Cash,DIRECT_DEBIT,CREDIT_CARD,BANK_TRANSFER,CHEQUE,ESPECES,PRELEVEMENT,CARTE,VIREMENT",
+            244: "VISA,MASTERCARD,AMEX,CB",
+            247: "FR,AR,EN,ES,DE,IT",
+            248: "FR,AR,EN,ES,DE,IT",
+            250: "Personne Privée,Entreprise,Grand Compte,PME",
+            252: "INDIVIDUAL,ENTERPRISE,SME,PERSON",
+            254: "ACTIVE,INACTIVE,SUSPENDED",
+            256: "CUSTOMER,PROSPECT,PARTNER",
+            257: "EMAIL,SMS,COURRIER,PORTAL",
+            259: "NET15,NET30,NET45,NET60",
+            263: "CNI,PASSEPORT,PERMIS",
+            336: "Homme,Femme",
+            338: "Personne Privée,Entreprise,Grand Compte,PME",
+            340: "CUSTOMER,PROSPECT,PARTNER",
+            342: "INDIVIDUAL,ENTERPRISE,SME",
+            357: "Cash,DIRECT_DEBIT,CREDIT_CARD,BANK_TRANSFER,CHEQUE,ESPECES,PRELEVEMENT,CARTE,VIREMENT",
+            358: "MONTHLY,QUARTERLY,ANNUAL",
+            367: "ESPECES,PRELEVEMENT,CARTE,VIREMENT,CHEQUE",
+
+            # bscs_findocs
+            272: "IN,CR",
+            274: "Y,N",
+            348: "IN,CR",
+
+            # bscs_payments
+            279: "WEB,AGENCE,MOBILE,AUTOMATIQUE",
+            281: "ESPECES,CHEQUE,CARTE,MOBILE,VIREMENT,PRELEVEMENT",
+            283: "CREDIT,DEBIT",
+            344: "ESPECES,CHEQUE,CARTE,MOBILE,VIREMENT,PRELEVEMENT",
+            350: "CREDIT,DEBIT",
+
+            # bscs_place
+            292: "BILLING,USAGE,SERVICE",
+            293: "BILLING,USAGE,SERVICE",
+
+            # bscs_resource_directory
+            297: "MSISDN,SIM,PORT,IMEI,DN",
+            299: "ACTIVE,PENDING,BLOCKED,SUSPENDED",
+            354: "ACTIVE,PENDING,BLOCKED,SUSPENDED",
+
+            # bscs_resource_port
+            305: "ETHERNET,FIBER,DSL",
+
+            # bscs_resource_sim
+            310: "NANO,MICRO,STANDARD",
+            311: "THALES,GEMALTO,IDEMIA,GIESECKE",
+            352: "NANO,MICRO,STANDARD",
+            456: "ACTIVE,PENDING,BLOCKED,SUSPENDED",
+
+            # bscs_services
+            316: "A,S,T,D,P",
+            318: "INTERNET,VOICE,DATA,TV,VOICE_DATA,INTERNATIONAL",
+            346: "A,S,T,D,P",
+            356: "INTERNET,VOICE,DATA,TV,VOICE_DATA,INTERNATIONAL",
+
+            # bscs_payments
+            389: "Y,N",
+            390: "Y,N",
+
+            # bscs_memos
+            423: "BILLING,DISPUTE,SALES,TECHNICAL,COLLECTION,CREDIT,MARKETING,COMPLAINT,SERVICE,ADMIN,LEGAL,SYSTEM",
+
+            # bscs_customer_tax_exempt
+            507: "FULL_EXEMPT,PARTIAL_EXEMPT,NO_EXEMPT,PENDING",
+            508: "FULL_EXEMPT,PARTIAL_EXEMPT,NO_EXEMPT,PENDING",
+        }
+        if rule_id in DOMAIN_MAP:
+            return [v.strip() for v in DOMAIN_MAP[rule_id].split(",")]
+        return None
+
+    
     def _handle_sync_from_field(self, t, c, v, r):
         if not v or ":" not in v: return None, {}
         parts = v.split(":", 1); src_col = parts[0].strip(); mapping_str = parts[1]
@@ -834,18 +1027,48 @@ class CompleteSqlRuleEngine:
 
     def _handle_default_if_invalid_regex(self, t, c, v, r):
         import re as _re
-        label = r.get("detection_rule_label", "") or r.get("rule_label", "") or ""
-        pattern = None
-        m = _re.search(r'\^[^\s]+\$', label)
-        if m: pattern = m.group(0)
         default = "NULL" if (v or "").upper() == "NULL" else self._escape(v or "UNKNOWN")
+        rule_value = r.get("rule_value", "") or ""
+        label = r.get("detection_rule_label", "") or ""
+        
+        # Patterns connus par rule_id
+        REGEX_MAP = {
+            34:  r"^[A-Z]{3}$",           # COUNTRYCODEOFBIRTH
+            75:  r"^[A-Z]{3}$",
+            108: r"^[A-Z]{3}$",           # CURRENCY
+            121: r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$",
+            124: r"^[A-Z]{6}[A-Z0-9]{2}([A-Z0-9]{3})?$",  # BIC
+            125: r"^[A-Z]{2}[0-9]{2}[A-Z0-9]{4,}$",        # IBAN
+            143: r"^\+225[0-9]{10}$",     # PHONESPEC
+            148: r"^225[0-9]{10}$",       # MSISDN directory
+            149: r"^225[0-9]{10}$",       # MSISDN SIM
+            150: r".{32}",                # ENCRYPTIONKEY
+            153: r"^[0-9]{6}$",           # PERIOD
+            154: r"^REF[0-9A-Z-]{3,}$",
+            155: r"^EXT[0-9A-Z]{3,}$",
+            165: r"^CTR[A-Z0-9-]+$",
+            201: r"^[A-Z]{4}[A-Z]{2}[A-Z0-9]{2}([A-Z0-9]{3})?$",  # BIC
+            178: r"^[A-Z]{3}$",   # BSCS_BILLING_ACCOUNT.CURRENCY_ID
+            188: r"^[A-Z]{3}$",   # BSCS_CHARGE.CURRENCY
+            446: r"^[A-Z]{3}$",   # BSCS_PAYMENTS.PAYMENT_CURRENCY
+            247: r"^[A-Z]{3}$",
+        }
+        rule_id = r.get("rule_id")
+        pattern = REGEX_MAP.get(rule_id)
+        
+        if not pattern:
+   
+            m = _re.search(r'(\^[^\s\'\"]+\$)', label)
+            if m:
+                pattern = m.group(1)
+        
         if pattern:
             safe_pattern = pattern.replace("'", "\\'")
             return f"""UPDATE `{t}` SET `{c}` = {default}
                     WHERE `{c}` IS NOT NULL AND TRIM(`{c}`) != ''
                     AND `{c}` NOT REGEXP '{safe_pattern}'""", {}
+        
         return f"UPDATE `{t}` SET `{c}` = {default} WHERE `{c}` IS NULL OR TRIM(`{c}`) = ''", {}
-
     def _handle_not_equal_field(self, t, c, v, r):
         if not v or ":" not in v: return None, {}
         ref_col, suffix = v.split(":", 1)
@@ -881,13 +1104,11 @@ class CompleteSqlRuleEngine:
                     SUBSTRING(REPLACE(REPLACE(`{c}`,':',''),'-',''),11,2)))
                 WHERE `{c}` IS NOT NULL AND `{c}` != ''
                 AND `{c}` NOT REGEXP '^([0-9A-F]{{2}}[:-]){{5}}[0-9A-F]{{2}}$'""", {}
-
+    #Un alias permet à apply_rule() à trouver un handler exact sans passer par _handle_generic
     def _handle_regex_replace(self, t, c, v, r):
         return f"""UPDATE `{t}` SET `{c}` = DATE_FORMAT(CURDATE(), '%Y%m')
                 WHERE `{c}` IS NOT NULL
-                AND `{c}` NOT REGEXP '^(2024|2025|2026)(0[1-9]|1[0-2])$'""", {}
-
-    # ── Alias ────────────────────────────────────────────────────────────────
+                AND `{c}` NOT REGEXP '^(2024|2025|2026)(0[1-9]|1[0-2])$'""", {}    
     _handle_uppercase                          = _handle_upper_trim
     _handle_trim                               = _handle_upper_trim
     _handle_domain_force                       = _handle_force_value
@@ -903,7 +1124,7 @@ class CompleteSqlRuleEngine:
     _handle_length                             = _handle_max_length
     _handle_or                                 = _handle_mandatory_field
     _handle_in                                 = _handle_default_if_invalid_domain
-
+    _handle_aggregate_check_warn               = _handle_aggregate_check
     def _cross_fill_findocs(self, hook, table):
         conn = hook.get_conn(); cur = conn.cursor(); mod = 0
         try:
@@ -930,7 +1151,62 @@ class CompleteSqlRuleEngine:
         finally:
             cur.close(); conn.close()
         return mod
+    
+    def _handle_both(self, t, c, v, r):
+        """Les deux colonnes doivent être non nulles — corriger la colonne source."""
+        other_col = (v or "").strip()
+        if not other_col:
+            return f"""UPDATE `{t}` SET `{c}` = 'UNKNOWN'
+                    WHERE (`{c}` IS NULL OR TRIM(`{c}`) = '')""", {}
+        # Si l'une est null et l'autre non :copier
+        return f"""UPDATE `{t}` SET `{c}` = `{other_col}`
+                WHERE (`{c}` IS NULL OR TRIM(`{c}`) = '')
+                AND `{other_col}` IS NOT NULL
+                AND TRIM(`{other_col}`) != ''""", {}
 
+    def _handle_or(self, t, c, v, r):
+        """Au moins une des deux colonnes doit être non nulle."""
+        other_col = (v or "").strip()
+        if not other_col:
+            return None, {}
+        # Si les deux sont nulles : mettre 0 sur la colonne principale
+        return f"""UPDATE `{t}` SET `{c}` = 0
+                WHERE (`{c}` IS NULL OR `{c}` = 0)
+                AND (`{other_col}` IS NULL OR `{other_col}` = 0)""", {}
+
+    def _handle_notnull_if(self, t, c, v, r):
+        """Colonne obligatoire si une autre colonne est non nulle."""
+        if not v or ":" not in v:
+            return None, {}
+        condition_col, default = v.split(":", 1)
+        return f"""UPDATE `{t}` SET `{c}` = {self._escape(default.strip())}
+                WHERE (`{c}` IS NULL OR TRIM(`{c}`) = '')
+                AND `{condition_col.strip()}` IS NOT NULL
+                AND TRIM(`{condition_col.strip()}`) != ''""", {}
+    def _cross_check_customer_tax_exempt(self, hook, table):
+        conn = hook.get_conn(); cur = conn.cursor(); mod = 0
+        try:
+            # FULL_EXEMPT → rate doit être 0
+            cur.execute(f"""UPDATE `{table}` SET `EXEMPT_RATE` = 0
+                WHERE `EXEMPT_STATUS` = 'FULL_EXEMPT'
+                AND (`EXEMPT_RATE` IS NULL OR `EXEMPT_RATE` != 0)""")
+            mod += cur.rowcount
+            # PARTIAL_EXEMPT → rate doit être > 0
+            cur.execute(f"""UPDATE `{table}` SET `EXEMPT_RATE` = 50
+                WHERE `EXEMPT_STATUS` = 'PARTIAL_EXEMPT'
+                AND (`EXEMPT_RATE` IS NULL OR `EXEMPT_RATE` <= 0)""")
+            mod += cur.rowcount
+            # NO_EXEMPT → rate doit être 100
+            cur.execute(f"""UPDATE `{table}` SET `EXEMPT_RATE` = 100
+                WHERE `EXEMPT_STATUS` = 'NO_EXEMPT'
+                AND (`EXEMPT_RATE` IS NULL OR `EXEMPT_RATE` != 100)""")
+            mod += cur.rowcount
+            conn.commit()
+        except Exception as e:
+            conn.rollback(); raise
+        finally:
+            cur.close(); conn.close()
+        return mod 
     def _cross_check_payments_det(self, hook, table):
         conn = hook.get_conn(); cur = conn.cursor(); mod = 0
         try:
@@ -945,7 +1221,30 @@ class CompleteSqlRuleEngine:
         finally:
             cur.close(); conn.close()
         return mod
-
+    def _cross_check_charge(self, hook, table):
+        conn = hook.get_conn(); cur = conn.cursor(); mod = 0
+        try:
+            # AMOUNT ne peut pas dépasser CUSTOMPRICEVALUE du service
+            cur.execute(f"""UPDATE `{table}` c
+                JOIN `corrected_services` s ON c.`SPCODE` = s.`ID_SPCODE`
+                    AND c.`CONTRACT_ID` = s.`CONTRACT_ID`
+                SET c.`AMOUNT` = s.`CUSTOMPRICEVALUE`
+                WHERE c.`AMOUNT` > s.`CUSTOMPRICEVALUE`
+                AND s.`CUSTOMPRICEVALUE` IS NOT NULL""")
+            mod += cur.rowcount
+            # VALID_FROM charge >= VALID_FROM_DATE service
+            cur.execute(f"""UPDATE `{table}` c
+                JOIN `corrected_services` s ON c.`CONTRACT_ID` = s.`CONTRACT_ID`
+                SET c.`VALID_FROM` = s.`VALID_FROM_DATE`
+                WHERE c.`VALID_FROM` < s.`VALID_FROM_DATE`
+                AND s.`VALID_FROM_DATE` IS NOT NULL""")
+            mod += cur.rowcount
+            conn.commit()
+        except Exception as e:
+            conn.rollback(); raise
+        finally:
+            cur.close(); conn.close()
+        return mod
     def _cross_check_services_resources(self, hook, table):
         conn = hook.get_conn(); cur = conn.cursor(); mod = 0
         try:
@@ -967,6 +1266,10 @@ class CompleteSqlRuleEngine:
             cur.execute(f"""UPDATE `{table}` SET `INVOICING_IND` = 'Y'
                 WHERE `BILLING_ACCOUNT_PRIMAIRE` = 'O'
                 AND (`INVOICING_IND` IS NULL OR `INVOICING_IND` != 'Y')""")
+            mod += cur.rowcount
+            cur.execute(f"""UPDATE `{table}` SET `BA_VERS_STATUT` = 'PENDING'
+                WHERE `BA_VERS_STATUT` = 'ACTIVE'
+                AND `BA_VERS_VALID_FROM` > CURDATE()""")
             mod += cur.rowcount
             conn.commit()
             logger.info("  [BILLING_ACCOUNT] Cross-check terminé : %d mods", mod)
@@ -1048,7 +1351,6 @@ class CompleteSqlRuleEngine:
             cur.close(); conn.close()
         return mod
 
-# ← FIN DE LA CLASSE — retour au niveau 0
 def etl_table(table_name: str, **context) -> dict:
     ti = context["ti"]
     config = ti.xcom_pull(key="iteration_config", task_ids="load_iteration_config")
@@ -1064,7 +1366,6 @@ def etl_table(table_name: str, **context) -> dict:
     iteration_id            = config["iteration_id"]         
     detection_iteration_id = config.get("detection_iteration_id")   
     
-    # ✅ Utiliser detection_iteration_id pour lire les PKs du batch de détection
     pk_rows = _source_hook().get_records(
         "SELECT pk_value FROM bscs_detection_batch_pks "
         "WHERE run_id=%s AND table_name=%s AND iteration_id=%s",  
@@ -1073,7 +1374,7 @@ def etl_table(table_name: str, **context) -> dict:
 
     if not pk_rows:
         return {"table": table_name, "status": "NO_BATCH_PKS_FOUND", "rows_loaded": 0}
-
+    #pk des tables 
     pk_row = _source_hook().get_first(
         "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS "
         "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME=%s AND COLUMN_KEY='PRI' LIMIT 1",
@@ -1083,7 +1384,7 @@ def etl_table(table_name: str, **context) -> dict:
         return {"table": table_name, "status": "NO_PK", "rows_loaded": 0}
     pk_col = pk_row[0]
 
-    #  Utiliser directement les PKs de bscs_detection_batch_pks
+    #  les PKs de bscs_detection_batch_pks
     batch_pks    = [r[0] for r in pk_rows]
     pk_set_batch = set(str(p) for p in batch_pks)
 
@@ -1102,13 +1403,13 @@ def etl_table(table_name: str, **context) -> dict:
         logger.error("[%s] Erreur récupération PKs problématiques : %s", table_name, e)
 
 
-    pk_err = pk_set_problematiques & pk_set_batch
+    pk_err = pk_set_problematiques & pk_set_batch # PKs présentes  dans le batch et dans les problématiques
     pk_ok  = pk_set_batch - pk_err
     pks_err = list(pk_err)
     pks_ok  = list(pk_ok)
 
     logger.info(
-        "📊 [%s] Batch=%d | Problématiques=%d | Saines=%d",
+        " [%s] Batch=%d | Problématiques=%d | Saines=%d",
         table_name, len(batch_pks), len(pks_err), len(pks_ok)
     )
 
@@ -1165,27 +1466,26 @@ def etl_table(table_name: str, **context) -> dict:
         return {"table": table_name, "status": "EMPTY", "rows_loaded": 0}
 
     logger.info(
-        "✅ [%s] Extraction : %d err + %d ok = %d total",
+        " [%s] Extraction : %d err + %d ok = %d total",
         table_name, total_err, total_ok, total
     )
 
     df_all = pd.concat([df_err, df_ok], ignore_index=True)
 
-    # Dédoublonnage sur PK
+  
     if pk_col in df_all.columns:
         before = len(df_all)
         df_all = df_all.drop_duplicates(subset=[pk_col], keep="first")
         if len(df_all) != before:
             logger.warning(
-                "⚠️ [%s] %d doublons supprimés sur PK '%s'",
+                " [%s] %d doublons supprimés sur PK '%s'",
                 target, before - len(df_all), pk_col
             )
 
-    # Correction ID_FINDOC NULL si applicable
     if "ID_FINDOC" in df_all.columns:
         null_count = df_all["ID_FINDOC"].isna().sum()
         if null_count > 0:
-            logger.warning("⚠️ [%s] %d ID_FINDOC NULL → correction automatique", target, null_count)
+            logger.warning(" [%s] %d ID_FINDOC NULL → correction automatique", target, null_count)
             if "PAYMENT_ID" in df_all.columns:
                 mask = df_all["ID_FINDOC"].isna()
                 extracted = df_all.loc[mask, "PAYMENT_ID"].astype(str).str.extract(r"(\d+)", expand=False)
@@ -1206,12 +1506,9 @@ def etl_table(table_name: str, **context) -> dict:
         stg_cur  = stg_conn.cursor()
         try:
             ph_del = ",".join(["%s"] * len(batch_pks))
-
-            # ✅ DELETE sans filtre iteration_id → nettoie TOUTES les versions
-            # précédentes de ces PKs et garantit l'absence de doublon
             stg_cur.execute(
                 f"DELETE FROM `{target}` WHERE `{pk_col}` IN ({ph_del})",
-                [str(p) for p in batch_pks]  # ✅ PAS de iteration_id ici
+                [str(p) for p in batch_pks] 
             )
             stg_conn.commit()
             logger.info(
@@ -1228,13 +1525,12 @@ def etl_table(table_name: str, **context) -> dict:
 
     if not df_all.empty:
         try:
-            # Ajouter iteration_id pour traçabilité
+            
             df_all["iteration_id"] = iteration_id
             
-            # Conversion PK en string
+            
             df_all[pk_col] = df_all[pk_col].astype(str)
             
-            # ✅ INSERT direct - le DELETE précédent garantit l'absence de doublon
             df_all.to_sql(
                 name=target,
                 con=stg_eng,
@@ -1346,18 +1642,19 @@ def load_iteration_config(**context) -> None:
         "detection_run_id":      detection_run_id,
         "detection_iteration_id": detection_iteration_id,
         "rules":                 rules,
-        "tables_involved":       sorted(set(r["table_name"] for r in rules))
+        "tables_involved":       sorted(set(r["table_name"] for r in rules))#set dédupliqué puis trié
     }
 
     context["ti"].xcom_push(key="iteration_config", value=config)
     logger.info(
-        "✅ Config OK — iter=%s | run=%s | detection_iter=%s | %d règles",
+        " Config OK — iter=%s | run=%s | detection_iter=%s | %d règles",
         iteration_id, detection_run_id, detection_iteration_id, len(rules)
     )    
 def generate_report(**context) -> None:
     c = context["ti"].xcom_pull(key="iteration_config", task_ids="load_iteration_config")
-    te = 0
-    tl = 0
+    te = 0 # total lignes extraites
+    tl = 0 # total modifications SQL
+
     summary = []
     for tbl in sorted(SOURCE_TO_TARGET.keys()):
         r = context["ti"].xcom_pull(task_ids=f"etl_tables.etl_{tbl}") or {}
@@ -1367,7 +1664,7 @@ def generate_report(**context) -> None:
         if e > 0:
             summary.append((c["iteration_id"], context["run_id"], tbl, e, r.get("sql_modifications", 0)))
 
-    logger.info("=== BILAN SQL === iter=%s | ext=%d | sql_mods=%d", c["iteration_id"], te, tl)
+    logger.info("BILAN SQL : iter=%s | ext=%d | sql_mods=%d", c["iteration_id"], te, tl)
     
     if summary:
         h = _staging_hook()
@@ -1375,7 +1672,7 @@ def generate_report(**context) -> None:
         cu = cn.cursor()
         cu.executemany(
             "INSERT INTO migration_run_summary(iteration_id, dag_run_id, table_name, rows_extracted, rows_loaded, run_at) VALUES(%s, %s, %s, %s, %s, NOW())",
-            [(row[0], row[1], row[2], row[3], row[3]) for row in summary]
+            [(row[0], row[1], row[2], row[3], row[4]) for row in summary]
         )
         cn.commit()
         cu.close()
@@ -1386,14 +1683,14 @@ def generate_report(**context) -> None:
         src_cu = src_cn.cursor()
         src_cu.execute(
         "UPDATE bscs_iteration_config SET has_correction = 1 WHERE iteration_id = %s",
-        [c["detection_iteration_id"]]  # 👈 au lieu de c["iteration_id"]
+        [c["detection_iteration_id"]] 
         )
         src_cn.commit()
         src_cu.close()
         src_cn.close()
-        logger.info("✅ has_correction=1 pour detection_iter=%s", c["detection_iteration_id"])
+        logger.info(" has_correction=1 pour detection_iter=%s", c["detection_iteration_id"])
     except Exception as e:
-        logger.error("❌ Erreur UPDATE has_correction: %s", e)
+        logger.error("Erreur UPDATE has_correction: %s", e)
 
     context["ti"].xcom_push(key="detection_run_id", value=c.get("detection_run_id"))
     context["ti"].xcom_push(key="detection_iteration_id", value=c.get("detection_iteration_id"))

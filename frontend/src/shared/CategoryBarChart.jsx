@@ -3,16 +3,12 @@ import {
     BarChart, Bar, XAxis, YAxis, CartesianGrid,
     Tooltip, Cell, ResponsiveContainer, LabelList
 } from 'recharts';
-
-/* ── Couleur selon nombre de violations ── */
 function getBarColor(value, maxViolations) {
     const ratio = value / maxViolations;
     if (ratio < 0.2) return '#059669';
     if (ratio < 0.5) return '#d97706';
     return '#dc2626';
 }
-
-/* ── Tooltip personnalisé ── */
 function CustomTooltip({ active, payload }) {
     if (!active || !payload?.length) return null;
     const d = payload[0].payload;

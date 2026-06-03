@@ -10,16 +10,12 @@ import org.springframework.transaction.annotation.Transactional;
 import java.util.List;
 import java.util.Optional;
 
-/**
- * Repository pour l'entité BSCS_ITERATION_CONFIG
- * Gère les configurations d'itération (règles sélectionnées pour correction)
- */
+
 @Repository
 public interface IterationConfigRepository extends JpaRepository<BscsIterationConfig, Integer> {
 
     List<BscsIterationConfig> findByIterationId(Integer iterationId);
 
-    List<BscsIterationConfig> findByIterationIdAndFlagToCheck(Integer iterationId, Boolean flagToCheck);
 
     boolean existsByIterationIdAndTableNameAndColumnNameAndRule(
             Integer iterationId,
@@ -32,14 +28,23 @@ public interface IterationConfigRepository extends JpaRepository<BscsIterationCo
     @Transactional
     @Query("DELETE FROM BscsIterationConfig ic WHERE ic.iterationId = :iterationId")
     void deleteByIterationId(@Param("iterationId") Integer iterationId);
-
-    /** Tous les IDs d'itérations (ordre décroissant) */
-    @Query("SELECT DISTINCT ic.iterationId FROM BscsIterationConfig ic ORDER BY ic.iterationId DESC")
-    List<Integer> findAllIterationIds();
+    @Query(value = """
+    SELECT b.table_name, b.offset_current
+    FROM bscs_iteration_config b
+    INNER JOIN (
+        SELECT table_name, MAX(iteration_id) AS last_iter
+        FROM bscs_iteration_config
+        GROUP BY table_name
+    ) latest ON b.table_name = latest.table_name
+            AND b.iteration_id = latest.last_iter
+    GROUP BY b.table_name, b.offset_current
+    """, nativeQuery = true)
+List<Object[]> findOffsetByLatestIteration();
+    
 
 
     @Query("SELECT MAX(ic.iterationId) FROM BscsIterationConfig ic")
     Optional<Integer> findMaxIterationId();
-}
+    }
 
 

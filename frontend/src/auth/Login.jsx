@@ -20,14 +20,12 @@ export default function Login() {
     setLoading(true);
     setError("");
 
-    // Validation du format email côté client
     if (!isValidEmail(mail)) {
       setError("Format email incorrect");
       setLoading(false);
       return;
     }
 
-    // Validation du mot de passe non vide
     if (!password || password.trim() === "") {
       setError("Mot de passe requis");
       setLoading(false);
@@ -48,23 +46,18 @@ export default function Login() {
       console.log("response.data:", response.data);
       console.log("userMail:", userMail);
       
-      // Always save mail in case change-password page needs it
       sessionStorage.setItem("pendingMail", userMail);
-
-      // Redirect to change password before anything else
-      if (mustChangePassword) {
-        navigate("/change-password");
-        return;
-      }
-
       if (role === "ROLE_ADMIN") {
-        navigate("/admin/dashboard");
+          navigate("/admin/dashboard");
       } else if (role === "ROLE_AGENT_MIGRATION") {
-        navigate("/agent/dashboard");
+          if (mustChangePassword) {
+              navigate("/change-password");  
+          } else {
+              navigate("/agent/dashboard");  
+          }
       } else {
-        setError("Rôle non reconnu: " + role);
+          setError("Rôle non reconnu: " + role);
       }
-
     } catch (err) {
       if (err.code === "ERR_NETWORK") {
         setError("Impossible de contacter le serveur.");
@@ -72,7 +65,6 @@ export default function Login() {
         const data = err.response.data;
         const status = err.response.status;
         
-        // Gestion spécifique selon le type d'erreur
         if (status === 401) {
           // Distinction entre les différentes erreurs d'authentification
           if (data?.error?.toLowerCase().includes("email") || 
@@ -110,26 +102,13 @@ export default function Login() {
     }
   };
 
-  // Validation en temps réel du format email
   const handleEmailChange = (e) => {
-    const value = e.target.value;
-    setMail(value);
-    
-    // Effacer l'erreur quand l'utilisateur commence à taper
-    if (error && (error.includes("Format email") || error.includes("Utilisateur non trouvé"))) {
-      setError("");
-    }
+    setMail(e.target.value);
   };
-
   const handlePasswordChange = (e) => {
-    const value = e.target.value;
-    setPassword(value);
-    
-    // Effacer l'erreur de mot de passe quand l'utilisateur tape
-    if (error && error.includes("Mot de passe")) {
-      setError("");
-    }
-  };
+    setPassword(e.target.value);
+};
+ 
 
   return (
     <div className="auth-page">
@@ -143,16 +122,14 @@ export default function Login() {
           <div className="auth-field">
             <label className="auth-label">Email</label>
             <input
-              type="email"
+              type="text"
               value={mail}
               onChange={handleEmailChange}
               placeholder="Entrez votre email"
-              className={`auth-input ${mail && !isValidEmail(mail) ? 'input-error' : ''}`}
-              required
+              className="auth-input"
+              
             />
-            {mail && !isValidEmail(mail) && (
-              <small className="field-error">Format email incorrect</small>
-            )}
+            
           </div>
           
           <div className="auth-field">
@@ -163,7 +140,7 @@ export default function Login() {
               onChange={handlePasswordChange}
               placeholder="Entrez votre mot de passe"
               className="auth-input"
-              required
+             
             />
           </div>
           

@@ -5,7 +5,7 @@ export function useAuth() {
   const [user, setUser] = useState(null);
 
   useEffect(() => {
-    // ✅ Récupère l'email stocké lors du Login
+    //Récupère l'email stocké lors du Login
     const email = sessionStorage.getItem("pendingMail");
     
     if (email) {

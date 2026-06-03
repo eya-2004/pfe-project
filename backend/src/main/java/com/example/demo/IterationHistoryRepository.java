@@ -9,7 +9,7 @@ import java.util.List;
 
 @Repository
 public interface IterationHistoryRepository extends JpaRepository<BscsIterationConfig, Integer> {
-
+/**construise directement un objet DTO léger avec les champs*/
     @Query("SELECT DISTINCT new com.example.demo.IterationSummaryDto(i.iterationId, i.runId, i.selectedAt) " +
             "FROM BscsIterationConfig i " +
             "WHERE i.selectedBy = :selectedBy " +

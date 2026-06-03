@@ -32,7 +32,9 @@ export default function ManageAgents() {
     if (!form.firstname.trim()) e.firstname = 'Le nom est requis';
     if (!form.lastname.trim())  e.lastname  = 'Le prénom est requis';
     if (!form.mail.trim())      e.mail      = "L'email est requis";
+    if (!form.dateNaissance.trim())      e.dateNaissance      = "La date de naissance  est requis";
     else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.mail)) e.mail = "L'email n'est pas valide";
+
     return e;
   };
 
@@ -45,11 +47,11 @@ export default function ManageAgents() {
     setSubmitted(true);
     try {
       await axios.post(
-        `/admin/createAgent?firstname=${encodeURIComponent(form.firstname)}&lastname=${encodeURIComponent(form.lastname)}&mail=${encodeURIComponent(form.mail)}`,
+        `/admin/createAgent?firstname=${encodeURIComponent(form.firstname)}&lastname=${encodeURIComponent(form.lastname)}&dateNaissance=${encodeURIComponent(form.dateNaissance)}&mail=${encodeURIComponent(form.mail)}`,
         {}
       );
       setSucces(`Agent créé avec succès ! Email envoyé à ${form.mail}`);
-      setForm({ firstname: '', lastname: '', mail: '' });
+      setForm({ firstname: '', lastname: '',dateNaissance: '', mail: '' });
       fetchAgents();
     } catch (err) {
       setError(err.response?.data || "Erreur lors de la création de l'agent");
@@ -57,17 +59,14 @@ export default function ManageAgents() {
       setSubmitted(false);
     }
   };
-// Ajouter ces 2 nouveaux states (après les autres states existants)
 const [showDeleteModal, setShowDeleteModal] = useState(false);
 const [agentToDelete, setAgentToDelete] = useState(null);
 
-// Modifier la fonction handleDelete comme ceci :
 const handleDelete = async (id) => {
-  setAgentToDelete(id);          // Stocke l'ID
-  setShowDeleteModal(true);      // Ouvre le modal
+  setAgentToDelete(id);         
+  setShowDeleteModal(true);      
 };
 
-// Ajouter cette nouvelle fonction après handleDelete :
 const confirmDelete = async () => {
   setShowDeleteModal(false);
   try {
@@ -87,7 +86,7 @@ const cancelDelete = () => {
   return (
     <div className="ma-page">
 
-      {/* ── En-tête ── */}
+ 
       <div className="ma-page-header">
         <div>
           <h1 className="ma-page-title">Gestion des agents</h1>
@@ -99,7 +98,6 @@ const cancelDelete = () => {
         </div>
       </div>
 
-      {/* ── Alertes ── */}
       {error  && (
         <div className="ma-alert ma-alert--error">
           <span className="ma-alert-icon">⚠</span>
@@ -115,10 +113,8 @@ const cancelDelete = () => {
         </div>
       )}
 
-      {/* ── Layout deux colonnes ── */}
       <div className="ma-layout">
 
-        {/* ── Formulaire ── */}
         <div className="ma-card ma-form-card">
           <div className="ma-card-header">
             <span className="ma-card-icon">＋</span>
@@ -151,7 +147,18 @@ const cancelDelete = () => {
               />
               {formErrors.lastname && <span className="ma-field-err">{formErrors.lastname}</span>}
             </div>
-
+            <div className="ma-field">
+              <label className="ma-label" htmlFor="prenom">Date de naissance </label>
+              <input
+                id="dateNaissance"
+                type="text"
+                placeholder="date naissance"
+                className={`ma-input${formErrors.dateNaissance ? ' ma-input--err' : ''}`}
+                value={form.dateNaissance}
+                onChange={e => setForm({ ...form, dateNaissance: e.target.value })}
+              />
+              {formErrors.dateNaissance && <span className="ma-field-err">{formErrors.dateNaissance}</span>}
+            </div>
             <div className="ma-field">
               <label className="ma-label" htmlFor="email">Email</label>
               <input
@@ -184,14 +191,12 @@ const cancelDelete = () => {
             </button>
           </form>
 
-          {/* Info bulle -->  */}
           <div className="ma-info-tip">
             <span className="ma-tip-icon">✉</span>
             Un email contenant les identifiants sera automatiquement envoyé à l'agent.
           </div>
         </div>
 
-        {/* ── Tableau ── */}
         <div className="ma-card ma-table-card">
           <div className="ma-card-header">
             <span className="ma-card-icon">👥</span>
@@ -248,7 +253,6 @@ const cancelDelete = () => {
           )}
         </div>
       </div>
-      {/* ── Modal Confirmation Suppression ── */}
       {showDeleteModal && (
         <div className="ma-modal-overlay" onClick={cancelDelete}>
           <div className="ma-modal-box" onClick={e => e.stopPropagation()}>

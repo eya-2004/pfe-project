@@ -39,9 +39,11 @@ public class BscsIterationConfig {
     @Column(name = "rule_id")
     private Integer ruleId;
     @Column(name = "offset_current")
-    private Integer offsetCurrent;  // Dernier offset traité
+    private Integer offsetCurrent; 
     @Column(name = "rule_origin")
     private String ruleOrigin;
+    @Column(name = "has_correction", nullable = false)
+private Boolean hasCorrection = false;
     // Constructeurs
     public BscsIterationConfig() {}
 
@@ -106,4 +108,9 @@ public class BscsIterationConfig {
     public void setOffsetCurrent(Integer offsetCurrent) {
         this.offsetCurrent = offsetCurrent;
     }
+
+   
+
+    public Boolean getHasCorrection() { return hasCorrection; }
+    public void setHasCorrection(Boolean hasCorrection) { this.hasCorrection = hasCorrection; }
 }

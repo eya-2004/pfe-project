@@ -75,7 +75,6 @@ const CorrectionConfig = () => {
 
     setLoadingErrors(true);
     try {
-      // Charger les erreurs groupées par table/colonne/rule_label
       const { data } = await api.get(`/correction-config/run-errors/${runId}`);
       
       // Grouper par table puis colonne
@@ -170,7 +169,7 @@ const CorrectionConfig = () => {
 
 const handleSave = async () => {
 
-  // ✅ Vérifications AVANT tout
+
   if (!selectedRunId) {
     addAlert('warning', '⚠️ Sélectionnez un run de détection');
     return;
@@ -183,7 +182,7 @@ const handleSave = async () => {
     return;
   }
 
-  // ✅ Construire payload AVANT le try
+
   const tablesMap = {};
   boundEntries.forEach(b => {
     if (!tablesMap[b.tableName]) {
@@ -214,12 +213,12 @@ const handleSave = async () => {
     })),
   };
 
-  // ✅ Appel API dans le try
+
   try {
     setSaving(true);
     const { data } = await api.post('/correction-config/save', payload);
     setLastSavedIterationId(data.iterationId);
-    addAlert('success', `✅ Itération #${data.iterationId} sauvegardée — ${boundEntries.length} règles`);
+    addAlert('success', ` Itération #${data.iterationId} sauvegardée — ${boundEntries.length} règles`);
     await initializeData();
   } catch (e) {
     addAlert('error', '❌ ' + (e.response?.data?.message || e.message));
@@ -239,7 +238,7 @@ const handleSave = async () => {
       async () => {
         try {
           setLaunching(true);
-          const { data } = await api.post('/post-correction/launch-etl', {
+          const { data } = await api.post('/correction-config/launch-etl', {
           iterationId:   lastSavedIterationId,
           detectionRunId: selectedRunId,
           triggeredBy:   userEmail || 'unknown',
@@ -277,20 +276,17 @@ const handleSave = async () => {
     closeConfirm();
   };
 
-  // Compteurs
+
   const totalErrors = Object.values(runErrors).reduce((acc, cols) =>
     acc + Object.values(cols).reduce((a, errs) => a + errs.length, 0), 0
   );
   const totalBound = Object.values(bindings).filter(b => b.transformationRuleId != null).length;
 
-  // ════════════════════════════════════════════════════════════
-  // RENDER
-  // ════════════════════════════════════════════════════════════
 
   return (
     <div className="correction-config-container">
 
-      {/* ── HEADER ── */}
+
       <div className="config-header">
         <div className="header-title">
           <Icon name="settings" size={28} />
@@ -305,7 +301,6 @@ const handleSave = async () => {
         </button>
       </div>
 
-      {/* ── TOOLBAR ── */}
       <div className="config-toolbar">
         <div className="toolbar-info">
           <span className="iteration-id">
@@ -350,7 +345,6 @@ const handleSave = async () => {
         </div>
       </div>
 
-      {/* ── ÉTAPE 1 : Sélection du run de détection (LISTE DÉROULANTE SANS CADRE DÉTAILS) ── */}
       <div className="cc-section">
         <div className="cc-section-header">
           <span className="cc-step-badge">1</span>
@@ -381,12 +375,11 @@ const handleSave = async () => {
               ))}
             </select>
             
-            {/* ✅ SUPPRIMÉ : Le cadre cc-selected-run-info avec DATE, VIOLATIONS, TABLES */}
+           
           </div>
         )}
       </div>
 
-      {/* ── ÉTAPE 2 : Associations erreurs → transformations ── */}
       {selectedRunId && (
         <div className="cc-section">
           <div className="cc-section-header">
@@ -402,7 +395,7 @@ const handleSave = async () => {
           {!loadingErrors && Object.entries(runErrors).map(([tableName, columns]) => (
             <div key={`table-${tableName}`} className="cc-table-block">
 
-              {/* En-tête table */}
+              
               <div className="cc-table-header">
                 <Icon name="database" size={16} />
                 <strong>{tableName}</strong>
@@ -447,7 +440,7 @@ const handleSave = async () => {
                             </div>
                           </div>
 
-                          {/* Flèche */}
+                         
                           <div className="cc-arrow">→</div>
 
                           {/* Colonne droite : sélection règle de transformation */}

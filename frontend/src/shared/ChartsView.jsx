@@ -8,7 +8,7 @@ import {
 // Tooltip personnalisé pour l'histogramme
 function CustomBarTooltip({ active, payload }) {
     if (!active || !payload?.length) return null;
-    const d = payload[0].payload;
+    const d = payload[0].payload;// objet complet de barChartData
     return (
         <div className="custom-tooltip">
             <p className="tooltip-label"><strong>{d.name}</strong></p>
@@ -17,8 +17,6 @@ function CustomBarTooltip({ active, payload }) {
         </div>
     );
 }
-
-// Tooltip personnalisé pour le donut
 function CustomDonutTooltip({ active, payload }) {
     if (!active || !payload?.length) return null;
     const d = payload[0].payload;
@@ -37,18 +35,15 @@ export default function ChartsView({tableData, correctionMode, hasCorrectionData
         
         return tableData
             .map(item => ({
-                name: item.columnName || '-',
-                nbViolations: item.nbViolations || 0,
-                rule: item.rule || '-',
-                category: item.errorCategory || '-'
+                name: item.tableName || '-',
+                nbToCorrect: item.nbToCorrect || 0,
+                
             }))
-            .filter(item => item.nbViolations > 0)  // Garder seulement les erreurs
-            .sort((a, b) => b.nbViolations - a.nbViolations)
-            .slice(0, 8);  // Top 8 des colonnes AVEC erreurs
+            .filter(item => item.nbToCorrect > 0)  // Garder seulement les erreurs
+            .sort((a, b) => b.nbToCorrect - a.nbToCorrect)
+            .slice(0, 8);  // max 8 des colonnes AVEC erreurs
     }, [tableData]);
 
-    // Données pour Donut Chart - LIGNES CORRECTES vs LIGNES À CORRIGER
-   // Données pour Donut Chart
 const donutData = React.useMemo(() => {
     if (!tableData || !Array.isArray(tableData)) return [];
     
@@ -62,13 +57,13 @@ const donutData = React.useMemo(() => {
 }, [tableData]);
 
 const totalLignes = donutData.reduce((sum, item) => sum + item.value, 0);
-    // Message si aucune erreur détectée
+
     const hasErrors = barChartData.length > 0;
 
     if (!tableData || tableData.length === 0) {
         return (
             <div className="charts-view-empty">
-                <p>📊 Aucune donnée à afficher</p>
+                <p>📊Aucune donnée à afficher</p>
             </div>
         );
     }
@@ -77,7 +72,6 @@ const totalLignes = donutData.reduce((sum, item) => sum + item.value, 0);
         <div className="charts-view">
             <div className="charts-grid">
                 
-                {/* ==================== HISTOGRAMME ==================== */}
                 <div className="chart-container">
                     <div className="chart-header">
                         <h3 className="chart-title">
@@ -94,7 +88,7 @@ const totalLignes = donutData.reduce((sum, item) => sum + item.value, 0);
                     
                     <div className="chart-body">
                         {hasErrors ? (
-                            <ResponsiveContainer width="100%" height={400}>
+                            <ResponsiveContainer width="100%" height={420}>
                                 <BarChart
                                     data={barChartData}
                                     layout="horizontal"
@@ -104,7 +98,7 @@ const totalLignes = donutData.reduce((sum, item) => sum + item.value, 0);
                                         left: 120,
                                         bottom: 60 
                                     }}
-                                    barCategoryGap="20%"
+                                    barCategoryGap="20%"// espace entre les  barres
                                     barGap={8}
                                 >
                                     <CartesianGrid 
@@ -114,8 +108,7 @@ const totalLignes = donutData.reduce((sum, item) => sum + item.value, 0);
                                         vertical={true}
                                         strokeOpacity={0.6}
                                     />
-                                    
-                                    {/* Axe Y */}
+                                
                                     <YAxis 
                                         type="number" 
                                         tick={{ fontSize: 12, fill: '#6B7280' }}
@@ -123,7 +116,7 @@ const totalLignes = donutData.reduce((sum, item) => sum + item.value, 0);
                                         tickLine={{ stroke: '#D1D5DB', strokeWidth: 1, length: 6 }}
                                         label={{
                                             value: 'Nombre de Violations',
-                                            angle: -90,
+                                            angle: -90,   // texte vertical
                                             position: 'insideLeft',
                                             offset: -70,
                                             style: { fontSize: 13, fontWeight: 600, fill: '#374151' }
@@ -131,8 +124,6 @@ const totalLignes = donutData.reduce((sum, item) => sum + item.value, 0);
                                         allowDecimals={false}
                                         domain={[0, 'auto']}
                                     />
-                                    
-                                    {/* Axe X */}
                                     <XAxis 
                                         type="category" 
                                         dataKey="name" 
@@ -151,9 +142,7 @@ const totalLignes = donutData.reduce((sum, item) => sum + item.value, 0);
                                             style: { fontSize: 13, fontWeight: 600, fill: '#374151' }
                                         }}
                                     />
-                                    
                                     <Tooltip content={<CustomBarTooltip />} />
-                                    
                                     <Bar
                                         dataKey="nbViolations"
                                         radius={[6, 6, 0, 0]}
@@ -162,7 +151,7 @@ const totalLignes = donutData.reduce((sum, item) => sum + item.value, 0);
                                         maxBarSize={50}
                                     >
                                         {barChartData.map((entry, index) => (
-                                            <Cell 
+                                            <Cell //chaque barre a sa propre couleur
                                                 key={`cell-${index}`} 
                                                 fill={
                                                     entry.nbViolations > 100 ? '#DC2626' :
@@ -175,14 +164,12 @@ const totalLignes = donutData.reduce((sum, item) => sum + item.value, 0);
                                         ))}
                                         
                                         <LabelList 
-                                            dataKey="nbViolations" 
-                                            position="top"
-                                            offset={5}
-                                            style={{ fontSize: 11, fontWeight: 700, fill: '#DC2626' }}
-                                            formatter={(value) => 
-                                                value > 0 ? value.toLocaleString('fr-FR') : ''
-                                            }
-                                        />
+                                        dataKey="nbViolations" 
+                                        position="insideTop"
+                                        offset={-20}
+                                        style={{ fontSize: 11, fontWeight: 700, fill: '#DC2626' }}
+                                        formatter={(value) => value > 0 ? value.toLocaleString('fr-FR') : ''}
+                                    />
                                     </Bar>
                                     
                                     <Legend 
@@ -193,6 +180,7 @@ const totalLignes = donutData.reduce((sum, item) => sum + item.value, 0);
                                     />
                                 </BarChart>
                             </ResponsiveContainer>
+                            
                         ) : (
                             // Message quand tout est OK
                             <div className="no-errors-message" style={{

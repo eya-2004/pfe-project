@@ -33,7 +33,7 @@ public class SecurityConfig {
         this.userDetailsService = userDetailsService;
     }
 
-    // ✅ Expose as a bean so AuthController can inject it
+    //  Expose as a bean so AuthController can inject it
     @Bean
     public SecurityContextRepository securityContextRepository() {
         return new HttpSessionSecurityContextRepository();
@@ -46,13 +46,13 @@ public class SecurityConfig {
             .csrf(AbstractHttpConfigurer::disable)
             .securityContext(context -> context
                 .securityContextRepository(securityContextRepository())
-                .requireExplicitSave(true)  // ✅ add this
+                .requireExplicitSave(true)  
             )
             .authorizeHttpRequests(auth -> auth
                 .requestMatchers(
                     "/api/auth/**",
                     "/api/inconsistencies/**",
-                    "/api/export/**", "/api/iterations/**","/api/correction-config/**",
+                     "/api/iterations/**","/api/correction-config/**",
                     "/dashboard/**"
                 ).permitAll()
                 .requestMatchers("/admin/**").hasRole("ADMIN")
@@ -78,7 +78,13 @@ public class SecurityConfig {
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration configuration = new CorsConfiguration();
-        configuration.setAllowedOrigins(Arrays.asList("http://localhost:5173"));
+        
+        configuration.setAllowedOriginPatterns(Arrays.asList(
+            "http://localhost:*",
+            "http://172.19.*.*",
+            "http://172.18.*.*"
+        ));
+        
         configuration.setAllowedMethods(Arrays.asList("GET", "POST", "PUT", "DELETE", "OPTIONS"));
         configuration.setAllowedHeaders(Arrays.asList("*"));
         configuration.setAllowCredentials(true);

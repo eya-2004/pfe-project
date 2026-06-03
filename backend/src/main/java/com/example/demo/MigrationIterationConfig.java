@@ -13,7 +13,7 @@ public class MigrationIterationConfig {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Column(name = "iteration_id")  // ✅ NOUVELLE COLONNE
+    @Column(name = "iteration_id")  
     private Integer iterationId;
 
     @Column(name = "rule_id", nullable = false)

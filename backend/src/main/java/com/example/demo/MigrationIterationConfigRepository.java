@@ -8,7 +8,5 @@ import java.util.List;
 @Repository
 public interface MigrationIterationConfigRepository extends JpaRepository<MigrationIterationConfig, Long> {
 
-    List<MigrationIterationConfig> findByDagRunId(String dagRunId);
     List<MigrationIterationConfig> findByIterationId(Integer iterationId);
-    long countByToExecute(MigrationIterationConfig.ToExecuteStatus status);
 }

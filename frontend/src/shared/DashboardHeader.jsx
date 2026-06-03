@@ -6,7 +6,7 @@ export default function DashboardHeader({
     selectedTable, onTableChange,
     viewMode, onViewModeChange,
     loading,
-    // Props pour les itérations
+
     iterationsList = [],
     selectedIterationId, onIterationChange,
     runsForSelectedIteration = [],
@@ -74,13 +74,13 @@ export default function DashboardHeader({
                                 className={`toggle-btn ${correctionMode === 'before' ? 'active' : ''}`}
                                 onClick={() => onCorrectionModeChange('before')}
                             >
-                                ⚡ Avant correction
+                                ⚡ Avant correction 
                             </button>
                             <button
                                 className={`toggle-btn ${correctionMode === 'after' ? 'active' : ''}`}
                                 onClick={() => {
                                     if (!hasCorrectionData) {
-                                        setShowNoCorrection(true); // 👈 ouvrir la fenêtre
+                                        setShowNoCorrection(true); //  ouvrir la fenêtre
                                     } else {
                                         onCorrectionModeChange('after');
                                     }
@@ -90,7 +90,7 @@ export default function DashboardHeader({
                             </button>
                         </div>
                     </div>
-                    {/* Sélecteur de table — à ajouter dans filters-row */}
+
                     <div className="filter-group">
                         <label className="filter-label">
                             <Icon name="table" size={14} />
@@ -132,7 +132,7 @@ export default function DashboardHeader({
                         </select>
                     </div>
 
-                    {/* Sélecteur de run (date/heure) */}
+                    
                     {runsForSelectedIteration.length > 0 && (
                         <div className="filter-group">
                             <label className="filter-label">
@@ -154,7 +154,7 @@ export default function DashboardHeader({
                                             hour: '2-digit',
                                             minute: '2-digit'
                                         })}
-                                        {index === 0 && ' (plus récente)'}
+                                        {index === 0 && ''}
                                     </option>
                                 ))}
                             </select>
@@ -190,7 +190,7 @@ export default function DashboardHeader({
                                 className="modal-btn-secondary"
                                 onClick={() => setShowNoCorrection(false)}
                             >
-                                Fermer
+                                Annuler
                             </button>
                         </div>
                     </div>
